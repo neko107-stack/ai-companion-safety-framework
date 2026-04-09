@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, createElement } from "react";
 
 // ━━━ 定数 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -16,7 +16,7 @@ const EXPORT_VERSION = "1.0";
 
 // ━━━ エラーログシステム ━━━━━━━━━━━━━━━━━━━━━
 
-const APP_VERSION = "2.5";
+const APP_VERSION = "2.6";
 const LOG_KEY     = "aico_errorlog";
 const LOG_MAX     = 200; // 最大保持件数
 
@@ -359,14 +359,11 @@ const SLIDES = [
   {icon:"📂",col:"#0EA5E9",title:"データはあなたの端末に保存されます。",
    isConsent:true,
    storageInfo:[
-     {os:"🌐 Webブラウザ版",path:"ブラウザの localStorage
-（サイトデータ）",note:"ブラウザの設定 → サイトのデータ から確認できます"},
+     {os:"🌐 Webブラウザ版",path:"ブラウザの localStorage（サイトデータ）",note:"ブラウザの設定 → サイトのデータ から確認できます"},
      {os:"🪟 Windows版",path:"C:\\Users\\ユーザー名\\AppData\\Local\\AICompanion\\",note:"AppDataは隠しフォルダです。エクスプローラーで表示する設定が必要です"},
      {os:"🍎 macOS版",path:"~/Library/Application Support/AICompanion/",note:"Finderの「移動」メニュー → フォルダへ移動 から開けます"},
-     {os:"📱 iOS版",path:"アプリのサンドボックス内
-（設定 → 一般 → iPhoneストレージ）",note:"外部からは直接アクセスできません。エクスポート機能をご利用ください"},
-     {os:"🤖 Android版",path:"内部ストレージ / Android/data/
-com.aicompanion/files/",note:"Android 11以降は直接アクセスに制限があります"},
+     {os:"📱 iOS版",path:"アプリのサンドボックス内（設定 → 一般 → iPhoneストレージ）",note:"外部からは直接アクセスできません。エクスポート機能をご利用ください"},
+     {os:"🤖 Android版",path:"内部ストレージ/Android/data/com.aicompanion/files/",note:"Android 11以降は直接アクセスに制限があります"},
    ],
    body:"以下の内容に同意してはじめることができます。",
    col:"#0EA5E9",
@@ -672,16 +669,16 @@ function ErrorToast({ entry, onDismiss }) {
 
 // ━━━ データ管理・エクスポート・インポートコンポーネント ━━━
 function DataManagementSection({ companion, profile, msgs, S, ac }) {
-  const [exPass,   setExPass]   = React.useState("");
-  const [msgsReset, setMsgsReset] = React.useState(false);
-  const [imPass,   setImPass]   = React.useState("");
-  const [imFile,   setImFile]   = React.useState(null);
-  const [exStatus, setExStatus] = React.useState(null); // null | "ok" | "error"
-  const [imStatus, setImStatus] = React.useState(null);
-  const [imMsg,    setImMsg]    = React.useState("");
-  const [exporting,setExporting]= React.useState(false);
-  const [importing,setImporting]= React.useState(false);
-  const fileRef = React.useRef(null);
+  const [exPass,   setExPass]   = useState("");
+  const [msgsReset, setMsgsReset] = useState(false);
+  const [imPass,   setImPass]   = useState("");
+  const [imFile,   setImFile]   = useState(null);
+  const [exStatus, setExStatus] = useState(null); // null | "ok" | "error"
+  const [imStatus, setImStatus] = useState(null);
+  const [imMsg,    setImMsg]    = useState("");
+  const [exporting,setExporting]= useState(false);
+  const [importing,setImporting]= useState(false);
+  const fileRef = useRef(null);
 
   const handleExport = async () => {
     if (exPass.length < 4) { setExStatus("error"); return; }
@@ -723,64 +720,64 @@ function DataManagementSection({ companion, profile, msgs, S, ac }) {
     } finally { setImporting(false); }
   };
 
-  return React.createElement("div", { style:{marginTop:14,paddingTop:14,borderTop:"1px solid #F1F5F9"} },
-    React.createElement("div", {style:{fontSize:11,fontWeight:600,color:"#64748B",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:12}}, "データ管理"),
+  return createElement("div", { style:{marginTop:14,paddingTop:14,borderTop:"1px solid #F1F5F9"} },
+    createElement("div", {style:{fontSize:11,fontWeight:600,color:"#64748B",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:12}}, "データ管理"),
 
     /* ── エクスポート ── */
-    React.createElement("div", {style:{background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:12,padding:"12px 14px",marginBottom:10}},
-      React.createElement("div", {style:{fontSize:12,fontWeight:600,color:"#1E293B",marginBottom:4}}, "📦 エクスポート（暗号化バックアップ）"),
-      React.createElement("div", {style:{fontSize:11,color:"#64748B",marginBottom:10,lineHeight:1.6}},
+    createElement("div", {style:{background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:12,padding:"12px 14px",marginBottom:10}},
+      createElement("div", {style:{fontSize:12,fontWeight:600,color:"#1E293B",marginBottom:4}}, "📦 エクスポート（暗号化バックアップ）"),
+      createElement("div", {style:{fontSize:11,color:"#64748B",marginBottom:10,lineHeight:1.6}},
         "プロファイル・会話履歴・設定をAES-256で暗号化して.companionファイルに保存します。"
       ),
-      React.createElement("div", {style:{position:"relative",marginBottom:8}},
-        React.createElement("input", {
+      createElement("div", {style:{position:"relative",marginBottom:8}},
+        createElement("input", {
           type:"password", value:exPass, placeholder:"パスワードを設定（4文字以上）",
           onChange:e=>{ setExPass(e.target.value); setExStatus(null); },
           style:{width:"100%",padding:"9px 12px",borderRadius:9,border:"1.5px solid #E2E8F0",fontSize:13,color:"#1E293B",outline:"none",boxSizing:"border-box"}
         })
       ),
-      React.createElement("button", {
+      createElement("button", {
         onClick:handleExport, disabled:exporting||exPass.length<4,
         style:{width:"100%",padding:"9px 0",borderRadius:9,border:"none",background:exPass.length>=4?ac.main:"#E2E8F0",color:exPass.length>=4?"#FFF":"#94A3B8",fontWeight:600,fontSize:13,cursor:exPass.length>=4?"pointer":"not-allowed",transition:"all 0.2s"}
       }, exporting ? "暗号化中…" : "エクスポート"),
-      exStatus==="ok"  && React.createElement("div",{style:{fontSize:11,color:"#059669",marginTop:6,fontWeight:500}},"✓ エクスポートしました"),
-      exStatus==="error" && React.createElement("div",{style:{fontSize:11,color:"#DC2626",marginTop:6}},"パスワードは4文字以上で入力してください")
+      exStatus==="ok"  && createElement("div",{style:{fontSize:11,color:"#059669",marginTop:6,fontWeight:500}},"✓ エクスポートしました"),
+      exStatus==="error" && createElement("div",{style:{fontSize:11,color:"#DC2626",marginTop:6}},"パスワードは4文字以上で入力してください")
     ),
 
     /* ── インポート ── */
-    React.createElement("div", {style:{background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:12,padding:"12px 14px",marginBottom:10}},
-      React.createElement("div", {style:{fontSize:12,fontWeight:600,color:"#1E293B",marginBottom:4}}, "📂 インポート（バックアップから復元）"),
-      React.createElement("div", {style:{fontSize:11,color:"#64748B",marginBottom:10,lineHeight:1.6}},
+    createElement("div", {style:{background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:12,padding:"12px 14px",marginBottom:10}},
+      createElement("div", {style:{fontSize:12,fontWeight:600,color:"#1E293B",marginBottom:4}}, "📂 インポート（バックアップから復元）"),
+      createElement("div", {style:{fontSize:11,color:"#64748B",marginBottom:10,lineHeight:1.6}},
         ".companionファイルを選択してパスワードを入力してください。現在のデータは上書きされます。"
       ),
-      React.createElement("button", {
+      createElement("button", {
         onClick:()=>fileRef.current?.click(),
         style:{width:"100%",padding:"9px 0",borderRadius:9,border:"1.5px dashed #CBD5E1",background:"#FAFAFA",color:"#475569",fontSize:13,cursor:"pointer",marginBottom:8}
       }, imFile ? "📄 "+imFile.name : "ファイルを選択 (.companion)"),
-      React.createElement("input",{ref:fileRef,type:"file",accept:".companion,.json",style:{display:"none"},onChange:e=>{setImFile(e.target.files[0]);setImStatus(null);setImMsg("");}}),
-      React.createElement("input", {
+      createElement("input",{ref:fileRef,type:"file",accept:".companion,.json",style:{display:"none"},onChange:e=>{setImFile(e.target.files[0]);setImStatus(null);setImMsg("");}}),
+      createElement("input", {
         type:"password", value:imPass, placeholder:"エクスポート時のパスワード",
         onChange:e=>{ setImPass(e.target.value); setImStatus(null); setImMsg(""); },
         style:{width:"100%",padding:"9px 12px",borderRadius:9,border:"1.5px solid #E2E8F0",fontSize:13,color:"#1E293B",outline:"none",boxSizing:"border-box",marginBottom:8}
       }),
-      React.createElement("button", {
+      createElement("button", {
         onClick:handleImport, disabled:importing||!imFile||imPass.length<4,
         style:{width:"100%",padding:"9px 0",borderRadius:9,border:"none",background:imFile&&imPass.length>=4?"#6366F1":"#E2E8F0",color:imFile&&imPass.length>=4?"#FFF":"#94A3B8",fontWeight:600,fontSize:13,cursor:imFile&&imPass.length>=4?"pointer":"not-allowed",transition:"all 0.2s"}
       }, importing ? "復元中…" : "インポート"),
-      imStatus==="ok"    && React.createElement("div",{style:{fontSize:11,color:"#059669",marginTop:6,fontWeight:500}},"✓ "+imMsg),
-      imStatus==="error" && React.createElement("div",{style:{fontSize:11,color:"#DC2626",marginTop:6}},imMsg)
+      imStatus==="ok"    && createElement("div",{style:{fontSize:11,color:"#059669",marginTop:6,fontWeight:500}},"✓ "+imMsg),
+      imStatus==="error" && createElement("div",{style:{fontSize:11,color:"#DC2626",marginTop:6}},imMsg)
     ),
 
     /* ── リセット ── */
-    React.createElement("div", {style:{display:"flex",gap:7,marginBottom:6}},
-      React.createElement("button", {
+    createElement("div", {style:{display:"flex",gap:7,marginBottom:6}},
+      createElement("button", {
         onClick:()=>{
           ["msgs","history"].forEach(k=>{try{localStorage.removeItem("aico_"+k);}catch{}});
           setMsgsReset(true);
         },
         style:{flex:1,padding:"8px 0",borderRadius:9,border:"1.5px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontWeight:600,fontSize:12,cursor:"pointer"}
       }, "会話履歴を削除"),
-      React.createElement("button", {
+      createElement("button", {
         onClick:()=>{
           try{Object.keys(localStorage).filter(k=>k.startsWith("aico_")).forEach(k=>localStorage.removeItem(k));}catch{}
           try{sessionStorage.clear();}catch{}
@@ -789,7 +786,7 @@ function DataManagementSection({ companion, profile, msgs, S, ac }) {
         style:{flex:1,padding:"8px 0",borderRadius:9,border:"1.5px solid #E2E8F0",background:"#F8FAFC",color:"#64748B",fontWeight:600,fontSize:12,cursor:"pointer"}
       }, "全データリセット")
     ),
-    React.createElement("div",{style:{fontSize:10,color:"#94A3B8",lineHeight:1.6}},
+    createElement("div",{style:{fontSize:10,color:"#94A3B8",lineHeight:1.6}},
       "※ APIキーはタブを閉じると自動的に消えます（セキュリティ保護）"
     )
   );
@@ -1366,8 +1363,11 @@ export default function AICompanionApp() {
           companion={companion} profile={profile} msgs={msgs}
           onClose={() => setShowSettings(false)}
           onOpenAPISetup={() => setShowAPISetup(true)}
+          onOpenErrorLog={() => { setShowSettings(false); setShowErrorLog(true); }}
         />
       )}
+      {showErrorLog && <ErrorLogPanel onClose={() => setShowErrorLog(false)} />}
+      <ErrorToast entry={toastEntry} onDismiss={() => setToastEntry(null)} />
 
       {/* ヘッダー */}
       <div style={{padding:"11px 13px",display:"flex",alignItems:"center",gap:9,borderBottom:`1px solid ${T.panelBorder}`,background:T.headerBg,boxShadow:"0 1px 3px rgba(0,0,0,0.05)"}}>
