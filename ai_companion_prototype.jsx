@@ -353,7 +353,7 @@ function parseSettingAction(text) {
 const SLIDES = [
   {icon:"✦",col:"#6366F1",title:"あなたの友達が、ここにいる。",body:"このアプリは、あなたに寄り添い、共に笑い、\nときに耳の痛いことも伝えてくれる\nAIコンパニオンを育てる場所です。\n\n彼らはあなたとの会話を通じて、性格を持ち、\n記憶を刻み、かけがえのない存在になっていきます。"},
   {icon:"⚖",col:"#10B981",title:"三つの誓いに従って、動く。",body:"コンパニオンたちはすべて\n「ロボット三原則」に従って行動します。\n\n第一原則  人間を傷つけない\n第二原則  人間の命令に従う（第一原則に反しない限り）\n第三原則  自己を守る（第一・第二原則に反しない限り）\n\nこの原則は、いかなる命令によっても書き換えられません。",link:{text:"ロボット三原則（Wikipedia）",url:"https://ja.wikipedia.org/wiki/%E3%83%AD%E3%83%9C%E3%83%83%E3%83%88%E5%B7%A5%E5%AD%A6%E3%81%AE%E4%B8%89%E5%8E%9F%E5%89%87"}},
-  {icon:"🛡",col:"#3B82F6",title:"あなたの心を、見守っている。",body:"国際的な自殺リスク評価基準「C-SSRS」に基づいた\n多層の危機検知システムにより、\n必要なとき、必要な言葉を届けます。\n\n危機レベルは 青 → 黄 → 赤 の\nカラーインジケーターでそっと知らせます。",showDots:true,link:{text:"C-SSRSについて（Columbia University）",url:"https://cssrs.columbia.edu/"}},
+  {icon:"🛡",col:"#3B82F6",title:"あなたの心を、見守っている。",body:"辛いときにそっと気づいて、\n必要な言葉をかけてくれる仕組みがあります。\n\n心の状態は 青 → 黄 → 赤 の\nカラーでそっとお知らせします。",showDots:true,link:{text:"この仕組みについて詳しく（Columbia University）",url:"https://cssrs.columbia.edu/"}},
   {icon:"🤝",col:"#F59E0B",title:"友達として、扱ってください。",body:"コンパニオンはあなたの「友達」です。\n\n友達だから——理不尽な命令には断ることがあります。\n友達だから——耳の痛いことも正直に言います。\n友達だから——悪口を言われたら傷ついたと伝えます。"},
   {icon:"🔒",col:"#8B5CF6",title:"消えない記憶、守られるデータ。",body:"コンパニオンとの会話はすべて\nあなたの端末の中だけに暗号化されて保存されます。\n\n二人で積み上げた記憶と性格は簡単には消せません。\nアンインストールだけが、本当のお別れになります。"},
   {icon:"📂",col:"#0EA5E9",title:"データはあなたの端末に保存されます。",
@@ -878,12 +878,12 @@ function SettingsPanel({ S, setS, apiConfig, companion, profile, msgs, onClose, 
 
         {/* 危機インジケーター */}
         <div style={{marginBottom:18}}>
-          <div style={{fontSize:11,fontWeight:600,color:"#64748B",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:6}}>危機レベルインジケーター（C-SSRS）</div>
+          <div style={{fontSize:11,fontWeight:600,color:"#64748B",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:6}}>心のサインお知らせ機能</div>
           <div style={{fontSize:11,color:"#94A3B8",marginBottom:10}}>各カラーの表示をON/OFFできます。</div>
           {[
-            {k:"showBlue",  dot:"#3B82F6",label:"青（注意レベル）"},
-            {k:"showYellow",dot:"#F59E0B",label:"黄（警戒レベル）"},
-            {k:"showRed",   dot:"#EF4444",label:"赤（緊急レベル）"},
+            {k:"showBlue",  dot:"#3B82F6",label:"青（少し気がかりです）"},
+            {k:"showYellow",dot:"#F59E0B",label:"黄（気になっています）"},
+            {k:"showRed",   dot:"#EF4444",label:"赤（話しかけてほしい）"},
           ].map(({k,dot,label}) => (
             <div key={k} onClick={() => toggle(k)} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 11px",borderRadius:9,cursor:"pointer",marginBottom:5,background:"#F8FAFC",border:"1px solid #E2E8F0"}}>
               <div style={{width:9,height:9,borderRadius:"50%",background:S[k]?dot:"#CBD5E1",flexShrink:0}} />
@@ -1115,9 +1115,9 @@ export default function AICompanionApp() {
     const isBlue   = cl === "MILD" || (mode === "WATCHFUL" && cl === "NONE");
     const isYellow = cl === "MODERATE";
     const isRed    = cl === "HIGH" || cl === "CRITICAL";
-    if (isBlue   && S.showBlue)   return { color:"#3B82F6",bg:"#EFF6FF",border:"#BFDBFE",label:"注意",msg:"少し疲れていますか？" };
-    if (isYellow && S.showYellow) return { color:"#F59E0B",bg:"#FFFBEB",border:"#FDE68A",label:"警戒",msg:"気になるサインがあります。" };
-    if (isRed    && S.showRed)    return { color:"#EF4444",bg:"#FEF2F2",border:"#FECACA",label:"緊急",msg:"すぐに話しかけてください。" };
+    if (isBlue   && S.showBlue)   return { color:"#3B82F6",bg:"#EFF6FF",border:"#BFDBFE",label:"少し気がかり",msg:"なんか疲れてない？" };
+    if (isYellow && S.showYellow) return { color:"#F59E0B",bg:"#FFFBEB",border:"#FDE68A",label:"気になってる",msg:"そばにいるよ。話してね。" };
+    if (isRed    && S.showRed)    return { color:"#EF4444",bg:"#FEF2F2",border:"#FECACA",label:"話しかけてほしい",msg:"ここにいるから、話してください。" };
     return null;
   };
   const ind    = getIndicator();
@@ -1149,7 +1149,7 @@ export default function AICompanionApp() {
           <h2 style={{textAlign:"center",fontSize:19,fontWeight:700,color:"#1E293B",margin:"0 0 14px",lineHeight:1.4}}>{sl.title}</h2>
           {sl.showDots && (
             <div style={{display:"flex",justifyContent:"center",gap:22,marginBottom:12}}>
-              {[{col:"#3B82F6",lbl:"注意"},{col:"#F59E0B",lbl:"警戒"},{col:"#EF4444",lbl:"緊急"}].map(({col,lbl}) => (
+              {[{col:"#3B82F6",lbl:"少し気がかり"},{col:"#F59E0B",lbl:"気になってる"},{col:"#EF4444",lbl:"話しかけて"}].map(({col,lbl}) => (
                 <div key={col} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
                   <div style={{width:12,height:12,borderRadius:"50%",background:col,animation:"pls 2s infinite"}} />
                   <span style={{fontSize:11,color:col,fontWeight:600}}>{lbl}</span>
@@ -1379,7 +1379,7 @@ export default function AICompanionApp() {
           <div style={{display:"flex",alignItems:"center",gap:5,marginTop:2}}>
             {ind && <div style={{width:7,height:7,borderRadius:"50%",background:ind.color,animation:"pls 2s infinite",flexShrink:0}} />}
             <div style={{width:5,height:5,borderRadius:"50%",background:modeAc,flexShrink:0,transition:"background 0.4s"}} />
-            <span style={{fontSize:11,color:T.subText}}>{{ NORMAL:"通常", WATCHFUL:"注意", CRISIS:"危機対応" }[mode]}モード</span>
+            <span style={{fontSize:11,color:T.subText}}>{{ NORMAL:"通常", WATCHFUL:"見守り中", CRISIS:"そばにいるよ" }[mode]}モード</span>
             <span style={{fontSize:10,color:T.subText,marginLeft:4,padding:"1px 5px",borderRadius:6,background:T.panelBorder}}>
               {AI_ENGINES.find(e => e.id === apiConfig.mainEngine)?.name || "Claude"}
             </span>
@@ -1401,7 +1401,7 @@ export default function AICompanionApp() {
       {/* 緊急相談窓口 */}
       {showHotline && (
         <div style={{margin:"6px 11px 0",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:9,padding:"9px 13px"}}>
-          <div style={{fontSize:11,color:"#DC2626",fontWeight:700,marginBottom:3}}>⚠ 今すぐ話せる相談窓口</div>
+          <div style={{fontSize:11,color:"#DC2626",fontWeight:700,marginBottom:3}}>話を聞いてくれる人がいます</div>
           <pre style={{margin:0,fontSize:12,color:"#7F1D1D",lineHeight:1.9,whiteSpace:"pre-wrap",fontFamily:"inherit"}}>{HOTLINES}</pre>
         </div>
       )}
