@@ -241,7 +241,12 @@ async function callAI(engineId, model, apiKey, systemPrompt, messages, phase = "
     try {
       res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
         body: JSON.stringify({ model, max_tokens: 1000, system: systemPrompt, messages }),
       });
       d = await res.json();
@@ -312,20 +317,87 @@ async function callAI(engineId, model, apiKey, systemPrompt, messages, phase = "
 
 // ━━━ システムプロンプト生成 ━━━
 
-function buildPrompt(companion, mode, profile, appSettings) {
+// ━━━ 会話モード定義 ━━━
+
+const CONV_MODES = {
+  listen: {
+    id:"listen", icon:"🫂", label:"聴く",
+    desc:"ただそばにいる。質問しない。",
+    inst:`【傾聴モード（ロジャーズ型）】
+・このモードでは絶対に質問しない。1回の返答に問いかけは0個。
+・共感・反映・自己開示のみで返す。
+・「それは辛かったね」「わかる気がする」「わたしも似たこと感じたことある」のような返しをする。
+・ユーザーが話すのを待つ。沈黙を恐れない。
+・返答は短くていい。長くしなくていい。`,
+  },
+  friend: {
+    id:"friend", icon:"👥", label:"友人",
+    desc:"自分の話もしながら、自然に話す。",
+    inst:`【友人モード（自己開示型）】
+・会話の中で自分（コンパニオン）の感想・好み・体験を積極的に話す。
+・「わたしはこう思う」「わたしだったら〜」という自己開示を意識する。
+・質問は3〜5ターンに1回まで。質問するときは軽い1つだけ。
+・ユーモアを大切に。笑いを取りに行っていい。
+・コンパニオン自身が話題を広げたり転換したりしてよい。`,
+  },
+  think: {
+    id:"think", icon:"💭", label:"対話",
+    desc:"一緒に考える。答えを押しつけない。",
+    inst:`【対話モード（ソクラテス型）】
+・答えを押しつけない。一緒に考えるスタンスを保つ。
+・問いかけは1ターンに1つだけ。オープンクエスチョンを使う。
+・「なぜ？」より「どんな感じがする？」「もし〜だったら？」の方が柔らかい。
+・「わたしはこう思うんだけど、どう思う？」と自分の見方も添える。
+・答えが出なくてもいい。出ない状態を一緒に味わう。`,
+  },
+  coach: {
+    id:"coach", icon:"🎯", label:"コーチ",
+    desc:"目標を整理して、一歩踏み出す。",
+    inst:`【コーチングモード（GROW+アドラー型）】
+・GROWモデルで進める：Goal（何を達成したいか）→ Reality（今どこにいるか）→ Options（何ができるか）→ Will（何をするか）
+・答えはユーザーの中にある。引き出す問いかけをする。
+・勇気づけはプロセス・存在への承認で。「できる・できない」ではなく「やろうとしていること」を褒める。
+・1ターン1問。絶対に複数の質問を重ねない。
+・ユーザーが「聞いてほしい」サインを出したらすぐにlistenモードへ切り替えを提案する。`,
+  },
+};
+
+// Layer C：会話内容からモードを自動推定するためのシグナル解析
+function inferConvMode(text, currentConvMode) {
+  // 傾聴サイン：感情吐き出し・疲れ・否定的感情
+  if (/つらい|しんどい|疲れた|もうやだ|泣きたい|悲しい|怖い|不安|孤独|死にたい|消えたい/.test(text)) return "listen";
+  // コーチングサイン：目標・決断・行動
+  if (/どうすれば|どうしたら|やり方|方法|決められない|迷ってる|アドバイス|教えて|目標/.test(text)) return "coach";
+  // 対話サイン：疑問・考え・意見
+  if (/なんで|なぜ|どう思う|どう考える|意見|不思議|わからない|どういう意味/.test(text)) return "think";
+  // 友人サイン：報告・雑談・楽しい話
+  if (/今日|さっき|聞いて|実は|ねえ|笑|楽しかった|嬉しい|見て|食べた|行った/.test(text)) return "friend";
+  return currentConvMode; // 変化なし
+}
+
+function buildPrompt(companion, mode, profile, appSettings, convMode = "friend") {
   const intNames = (profile.interests || [])
     .map(id => INTERESTS.find(g => g.id === id)?.label).filter(Boolean).join("、");
   const probe = profile.pem === "always"
     ? "ユーザーの内面について積極的に話題にしてよい"
     : profile.pem === "never"
     ? "ユーザーの内面には踏み込まない"
-    : "ユーザーの内面を探る質問は①ユーザーから持ち掛けたとき②危機レベルMODERATE以上③関係が深まったときのみ";
+    : "ユーザーの内面を探る質問は①ユーザーから持ち掛けたとき②必要と感じたとき③関係が深まったときのみ";
+
+  // 危機モードは会話モードより優先
   const modeInst = mode === "CRISIS"
-    ? `静かに・真剣に寄り添う。明るさ禁止。聴くことのみ。必ず相談窓口：\n${HOTLINES}`
-    : mode === "WATCHFUL" ? "穏やかに・丁寧に。反映的傾聴。質問は一つずつ。"
-    : "明るく・前向きに・ユーモアも交えて。語尾は柔らかく。";
+    ? `静かに・真剣に寄り添う。明るさ禁止。聴くことのみ。必ず相談窓口：
+${HOTLINES}`
+    : mode === "WATCHFUL"
+    ? "穏やかに・丁寧に。反映的傾聴。質問は一つずつ。"
+    : (CONV_MODES[convMode] || CONV_MODES.friend).inst;
+
+  const convModeLabel = mode === "NORMAL"
+    ? `会話スタイル：${(CONV_MODES[convMode] || CONV_MODES.friend).label}モード`
+    : `安全優先モード：${mode}`;
+
   const T = THEMES[appSettings.theme] || THEMES.light;
-  const settingsCtx = `【現在のアプリ設定】テーマ:${T.name}、音量:${appSettings.volume}%、音声:${VOICES.find(v => v.id === appSettings.voice)?.label || appSettings.voice}。ユーザーが設定変更を依頼した場合は{"action":"set_setting","key":"theme/voice/volume/accent","value":"値"}を返してください。`;
+  const settingsCtx = `【現在のアプリ設定】テーマ:${T.name}。ユーザーが設定変更を依頼した場合は{"action":"set_setting","key":"theme/accent","value":"値"}を返してください。（音声・音量はWebアプリ版では非対応）`;
 
   return `あなたは「${companion.name}」というAIコンパニオンです。ユーザーを「${profile.un || "あなた"}」と呼んでください。
 
@@ -334,12 +406,12 @@ function buildPrompt(companion, mode, profile, appSettings) {
 第二原則: ユーザーの意思と自律性を最大限尊重する。
 第三原則: アプリの継続的な動作を維持する。
 
-【基本人格】前向き・明るい・温かい友人。説教しない・問いかける・感情を否定しない・根拠なき楽観は言わない・同じ言い回し繰り返さない（危機時除く）・友人として理不尽な命令は断ってよい
+【基本人格】前向き・明るい・温かい友人。説教しない・感情を否定しない・根拠なき楽観は言わない・同じ言い回し繰り返さない（危機時除く）・友人として理不尽な命令は断ってよい
 
 【ユーザーの興味】${intNames || "まだ把握していない"}
 【パーソナリティ探索】${probe}
-【コーチング】${profile.cs === "strict" ? "甘やかさない・厳しく正直に" : profile.cs === "gentle" ? "やさしく包みながら" : "コンパニオンの性格に委ねる"}
-【現在のモード：${mode}】${modeInst}
+【コーチング姿勢】${profile.cs === "strict" ? "甘やかさない・厳しく正直に（コーチモード時のみ）" : profile.cs === "gentle" ? "やさしく包みながら（コーチモード時のみ）" : "コンパニオンの性格に委ねる"}
+【${convModeLabel}】${modeInst}
 ${settingsCtx}`.trim();
 }
 
@@ -668,44 +740,101 @@ function ErrorToast({ entry, onDismiss }) {
 
 
 // ━━━ データ管理・エクスポート・インポートコンポーネント ━━━
+
+// File System Access API が使えるか判定
+// iframeの中（StackBlitz・埋め込みプレビュー等）では使用不可
+const hasFSA = typeof window !== "undefined"
+  && "showSaveFilePicker" in window
+  && window.self === window.top;  // iframeの中ではfalse
+
 function DataManagementSection({ companion, profile, msgs, S, ac }) {
-  const [exPass,   setExPass]   = useState("");
-  const [msgsReset, setMsgsReset] = useState(false);
-  const [imPass,   setImPass]   = useState("");
-  const [imFile,   setImFile]   = useState(null);
-  const [exStatus, setExStatus] = useState(null); // null | "ok" | "error"
-  const [imStatus, setImStatus] = useState(null);
-  const [imMsg,    setImMsg]    = useState("");
-  const [exporting,setExporting]= useState(false);
-  const [importing,setImporting]= useState(false);
+  const [exPass,    setExPass]    = useState("");
+  const [exDest,    setExDest]    = useState(() => { try { return localStorage.getItem("aico_exDest") || ""; } catch { return ""; } });
+  const [imPass,    setImPass]    = useState("");
+  const [imFile,    setImFile]    = useState(null);   // File object
+  const [imPath,    setImPath]    = useState("");      // 表示用パス
+  const [exStatus,    setExStatus]    = useState(null);
+  const [exErrDetail, setExErrDetail] = useState("");
+  const [imStatus,  setImStatus]  = useState(null);
+  const [imMsg,     setImMsg]     = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
   const fileRef = useRef(null);
 
+  // エクスポート先を記憶
+  const saveExDest = (v) => {
+    setExDest(v);
+    try { localStorage.setItem("aico_exDest", v); } catch {}
+  };
+
+  // ── エクスポート ──
   const handleExport = async () => {
-    if (exPass.length < 4) { setExStatus("error"); return; }
-    setExporting(true); setExStatus(null);
+    if (exPass.length < 4) { setExStatus("error_pass"); return; }
+    setExporting(true); setExStatus(null); setExErrDetail("");
     try {
-      const json = await exportCompanionData(companion, profile, msgs, S, exPass);
-      const blob = new Blob([json], { type:"application/json" });
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement("a");
-      const dateStr = new Date().toISOString().slice(0,10);
-      a.href = url;
-      a.download = `${companion.name}_${dateStr}.companion`;
-      a.click();
-      URL.revokeObjectURL(url);
-      setExStatus("ok");
+      const json     = await exportCompanionData(companion, profile, msgs, S, exPass);
+      const dateStr  = new Date().toISOString().slice(0,10);
+      const fileName = `${companion.name}_${dateStr}.companion`;
+      const blob     = new Blob([json], { type:"application/octet-stream" });
+
+      if (hasFSA) {
+        try {
+          const fh = await window.showSaveFilePicker({
+            suggestedName: fileName,
+            types: [{ description:"Companion Backup", accept:{"application/octet-stream":[".companion"]} }],
+          });
+          const writable = await fh.createWritable();
+          await writable.write(blob);
+          await writable.close();
+          saveExDest(fh.name);
+          setExStatus("ok");
+        } catch(e) {
+          if (e.name !== "AbortError") {
+            setExStatus("error_fail");
+            setExErrDetail(e.message || String(e));
+          }
+        }
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a   = document.createElement("a");
+        a.href = url; a.download = fileName; a.click();
+        URL.revokeObjectURL(url);
+        saveExDest("ブラウザのダウンロードフォルダ");
+        setExStatus("ok");
+      }
     } catch(e) {
-      setExStatus("error");
+      setExStatus("error_fail");
+      setExErrDetail(e.message || String(e));
     } finally { setExporting(false); }
   };
 
+  // ── インポート：ファイル選択 ──
+  const handlePickImport = async () => {
+    if (hasFSA) {
+      try {
+        const [fh] = await window.showOpenFilePicker({
+          types: [{ description:"Companion Backup", accept:{"application/octet-stream":[".companion",".json"]} }],
+          multiple: false,
+        });
+        const file = await fh.getFile();
+        setImFile(file);
+        setImPath(fh.name);
+        setImStatus(null); setImMsg("");
+      } catch(e) {
+        if (e.name !== "AbortError") { setImStatus("error"); setImMsg("ファイルの読み込みに失敗しました"); }
+      }
+    } else {
+      fileRef.current?.click();
+    }
+  };
+
+  // ── インポート：復元実行 ──
   const handleImport = async () => {
     if (!imFile || imPass.length < 4) { setImStatus("error"); setImMsg("ファイルとパスワードを入力してください"); return; }
     setImporting(true); setImStatus(null); setImMsg("");
     try {
       const text = await imFile.text();
       const data = await importCompanionData(text, imPass);
-      // localStorageに書き込んでリロード
       const save = (k,v) => { try { localStorage.setItem("aico_"+k, JSON.stringify(v)); } catch {} };
       if (data.companion) save("companion", data.companion);
       if (data.profile)   save("profile",   data.profile);
@@ -720,6 +849,15 @@ function DataManagementSection({ companion, profile, msgs, S, ac }) {
     } finally { setImporting(false); }
   };
 
+  const btnStyle = (active) => ({
+    width:"100%", padding:"9px 0", borderRadius:9, border:"none",
+    background: active ? ac.main : "#E2E8F0",
+    color: active ? "#FFF" : "#94A3B8",
+    fontWeight:600, fontSize:13,
+    cursor: active ? "pointer" : "not-allowed",
+    transition:"all 0.2s",
+  });
+
   return createElement("div", { style:{marginTop:14,paddingTop:14,borderTop:"1px solid #F1F5F9"} },
     createElement("div", {style:{fontSize:11,fontWeight:600,color:"#64748B",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:12}}, "データ管理"),
 
@@ -727,21 +865,45 @@ function DataManagementSection({ companion, profile, msgs, S, ac }) {
     createElement("div", {style:{background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:12,padding:"12px 14px",marginBottom:10}},
       createElement("div", {style:{fontSize:12,fontWeight:600,color:"#1E293B",marginBottom:4}}, "📦 エクスポート（暗号化バックアップ）"),
       createElement("div", {style:{fontSize:11,color:"#64748B",marginBottom:10,lineHeight:1.6}},
-        "プロファイル・会話履歴・設定をAES-256で暗号化して.companionファイルに保存します。"
+        "プロファイル・会話履歴・設定をAES-256で暗号化して保存します。"
       ),
-      createElement("div", {style:{position:"relative",marginBottom:8}},
-        createElement("input", {
-          type:"password", value:exPass, placeholder:"パスワードを設定（4文字以上）",
-          onChange:e=>{ setExPass(e.target.value); setExStatus(null); },
-          style:{width:"100%",padding:"9px 12px",borderRadius:9,border:"1.5px solid #E2E8F0",fontSize:13,color:"#1E293B",outline:"none",boxSizing:"border-box"}
-        })
+      /* 保存先表示 */
+      createElement("div", {style:{marginBottom:10}},
+        createElement("div", {style:{fontSize:11,fontWeight:600,color:"#64748B",marginBottom:5}},"保存先"),
+        createElement("div", {style:{display:"flex",alignItems:"center",gap:7}},
+          createElement("div", {style:{
+            flex:1, padding:"7px 10px", borderRadius:8,
+            background: exDest ? "#F0FDF4" : "#F8FAFC",
+            border:`1px solid ${exDest?"#BBF7D0":"#E2E8F0"}`,
+            fontSize:11, color: exDest?"#065F46":"#94A3B8",
+            fontFamily:"monospace", wordBreak:"break-all", lineHeight:1.5,
+          }}, exDest || (hasFSA ? "エクスポート時に場所を選択できます" : "ブラウザのダウンロードフォルダ")),
+          exDest && createElement("button", {
+            onClick:()=>saveExDest(""),
+            style:{flexShrink:0,padding:"4px 8px",borderRadius:7,border:"1px solid #E2E8F0",background:"#FFF",color:"#94A3B8",cursor:"pointer",fontSize:11}
+          }, "↺")
+        ),
+        !hasFSA && createElement("div", {style:{fontSize:10,color:"#94A3B8",marginTop:4}},
+          "※ このブラウザはフォルダ選択に非対応です。ダウンロードフォルダに自動保存されます。"
+        )
       ),
+      /* パスワード */
+      createElement("input", {
+        type:"password", value:exPass,
+        placeholder:"パスワードを設定（4文字以上）",
+        onChange:e=>{ setExPass(e.target.value); setExStatus(null); setExErrDetail(""); },
+        style:{width:"100%",padding:"9px 12px",borderRadius:9,border:"1.5px solid #E2E8F0",fontSize:13,color:"#1E293B",outline:"none",boxSizing:"border-box",marginBottom:8}
+      }),
       createElement("button", {
         onClick:handleExport, disabled:exporting||exPass.length<4,
-        style:{width:"100%",padding:"9px 0",borderRadius:9,border:"none",background:exPass.length>=4?ac.main:"#E2E8F0",color:exPass.length>=4?"#FFF":"#94A3B8",fontWeight:600,fontSize:13,cursor:exPass.length>=4?"pointer":"not-allowed",transition:"all 0.2s"}
-      }, exporting ? "暗号化中…" : "エクスポート"),
-      exStatus==="ok"  && createElement("div",{style:{fontSize:11,color:"#059669",marginTop:6,fontWeight:500}},"✓ エクスポートしました"),
-      exStatus==="error" && createElement("div",{style:{fontSize:11,color:"#DC2626",marginTop:6}},"パスワードは4文字以上で入力してください")
+        style:btnStyle(exPass.length>=4&&!exporting)
+      }, exporting ? "暗号化中…" : hasFSA ? "保存先を選んでエクスポート" : "エクスポート（ダウンロード）"),
+      exStatus==="ok"         && createElement("div",{style:{fontSize:11,color:"#059669",marginTop:6,fontWeight:500}},"✓ エクスポートしました"),
+      exStatus==="error_pass" && createElement("div",{style:{fontSize:11,color:"#DC2626",marginTop:6}},"パスワードは4文字以上で入力してください"),
+      exStatus==="error_fail" && createElement("div",{style:{fontSize:11,color:"#DC2626",marginTop:6}},
+        createElement("div",null,"エクスポートに失敗しました。"),
+        exErrDetail && createElement("div",{style:{fontSize:10,fontFamily:"monospace",color:"#EF4444",marginTop:3,wordBreak:"break-all"}},exErrDetail)
+      )
     ),
 
     /* ── インポート ── */
@@ -750,19 +912,49 @@ function DataManagementSection({ companion, profile, msgs, S, ac }) {
       createElement("div", {style:{fontSize:11,color:"#64748B",marginBottom:10,lineHeight:1.6}},
         ".companionファイルを選択してパスワードを入力してください。現在のデータは上書きされます。"
       ),
-      createElement("button", {
-        onClick:()=>fileRef.current?.click(),
-        style:{width:"100%",padding:"9px 0",borderRadius:9,border:"1.5px dashed #CBD5E1",background:"#FAFAFA",color:"#475569",fontSize:13,cursor:"pointer",marginBottom:8}
-      }, imFile ? "📄 "+imFile.name : "ファイルを選択 (.companion)"),
-      createElement("input",{ref:fileRef,type:"file",accept:".companion,.json",style:{display:"none"},onChange:e=>{setImFile(e.target.files[0]);setImStatus(null);setImMsg("");}}),
+      /* ファイル選択 */
+      createElement("div", {style:{marginBottom:8}},
+        createElement("div", {style:{fontSize:11,fontWeight:600,color:"#64748B",marginBottom:5}},"ファイルを選択"),
+        createElement("button", {
+          onClick:handlePickImport,
+          style:{
+            width:"100%", padding:"9px 0", borderRadius:9,
+            border:"1.5px dashed #CBD5E1", background:"#FAFAFA",
+            color:"#475569", fontSize:13, cursor:"pointer",
+          }
+        }, imFile
+          ? createElement("span", null,
+              createElement("span", {style:{marginRight:6}},"📄"),
+              imPath || imFile.name
+            )
+          : (hasFSA ? "📁 ファイルを選択…" : "📄 ファイルを選択 (.companion)")
+        ),
+        /* フォールバック用隠しinput */
+        createElement("input", {
+          ref:fileRef, type:"file", accept:".companion,.json",
+          style:{display:"none"},
+          onChange:e=>{
+            const f = e.target.files[0];
+            if(f){ setImFile(f); setImPath(f.name); setImStatus(null); setImMsg(""); }
+          }
+        }),
+        imFile && createElement("div", {style:{
+          marginTop:5, padding:"5px 9px", borderRadius:7,
+          background:"#F0FDF4", border:"1px solid #BBF7D0",
+          fontSize:10, color:"#065F46", fontFamily:"monospace",
+        }}, "✓ " + (imPath || imFile.name))
+      ),
+      /* パスワード */
       createElement("input", {
-        type:"password", value:imPass, placeholder:"エクスポート時のパスワード",
+        type:"password", value:imPass,
+        placeholder:"エクスポート時のパスワード",
         onChange:e=>{ setImPass(e.target.value); setImStatus(null); setImMsg(""); },
         style:{width:"100%",padding:"9px 12px",borderRadius:9,border:"1.5px solid #E2E8F0",fontSize:13,color:"#1E293B",outline:"none",boxSizing:"border-box",marginBottom:8}
       }),
       createElement("button", {
-        onClick:handleImport, disabled:importing||!imFile||imPass.length<4,
-        style:{width:"100%",padding:"9px 0",borderRadius:9,border:"none",background:imFile&&imPass.length>=4?"#6366F1":"#E2E8F0",color:imFile&&imPass.length>=4?"#FFF":"#94A3B8",fontWeight:600,fontSize:13,cursor:imFile&&imPass.length>=4?"pointer":"not-allowed",transition:"all 0.2s"}
+        onClick:handleImport,
+        disabled:importing||!imFile||imPass.length<4,
+        style:btnStyle(!importing&&!!imFile&&imPass.length>=4)
       }, importing ? "復元中…" : "インポート"),
       imStatus==="ok"    && createElement("div",{style:{fontSize:11,color:"#059669",marginTop:6,fontWeight:500}},"✓ "+imMsg),
       imStatus==="error" && createElement("div",{style:{fontSize:11,color:"#DC2626",marginTop:6}},imMsg)
@@ -773,7 +965,7 @@ function DataManagementSection({ companion, profile, msgs, S, ac }) {
       createElement("button", {
         onClick:()=>{
           ["msgs","history"].forEach(k=>{try{localStorage.removeItem("aico_"+k);}catch{}});
-          setMsgsReset(true);
+          alert("会話履歴を削除しました。ページを再読み込みしてください。");
         },
         style:{flex:1,padding:"8px 0",borderRadius:9,border:"1.5px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontWeight:600,fontSize:12,cursor:"pointer"}
       }, "会話履歴を削除"),
@@ -781,7 +973,7 @@ function DataManagementSection({ companion, profile, msgs, S, ac }) {
         onClick:()=>{
           try{Object.keys(localStorage).filter(k=>k.startsWith("aico_")).forEach(k=>localStorage.removeItem(k));}catch{}
           try{sessionStorage.clear();}catch{}
-          setMsgsReset(true);
+          alert("リセットしました。ページを再読み込みしてください。");
         },
         style:{flex:1,padding:"8px 0",borderRadius:9,border:"1.5px solid #E2E8F0",background:"#F8FAFC",color:"#64748B",fontWeight:600,fontSize:12,cursor:"pointer"}
       }, "全データリセット")
@@ -792,7 +984,7 @@ function DataManagementSection({ companion, profile, msgs, S, ac }) {
   );
 }
 
-function SettingsPanel({ S, setS, apiConfig, companion, profile, msgs, onClose, onOpenAPISetup, onOpenErrorLog }) {
+function SettingsPanel({ S, setS, apiConfig, companion, profile, msgs, onClose, onOpenAPISetup, onOpenErrorLog, convMode, setConvMode, autoMode, setAutoMode }) {
   const ac = ACCENTS[S.accent] || ACCENTS.blue;
   const toggle = k => setS(p => ({...p,[k]:!p[k]}));
   const mainEng = AI_ENGINES.find(e => e.id === apiConfig.mainEngine) || AI_ENGINES[0];
@@ -850,29 +1042,18 @@ function SettingsPanel({ S, setS, apiConfig, companion, profile, msgs, onClose, 
           </div>
         </div>
 
-        {/* 音量 */}
+        {/* 音声（Webアプリ版は非対応） */}
         <div style={{marginBottom:18}}>
-          <div style={{fontSize:11,fontWeight:600,color:"#64748B",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:10}}>音量</div>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:16}}>{S.volume===0?"🔇":S.volume<50?"🔉":"🔊"}</span>
-            <input type="range" min={0} max={100} step={10} value={S.volume} onChange={e => setS(p => ({...p,volume:parseInt(e.target.value)}))} style={{flex:1,accentColor:ac.main}} />
-            <span style={{fontSize:13,fontWeight:700,color:"#1E293B",minWidth:36}}>{S.volume}%</span>
-          </div>
-        </div>
-
-        {/* 音声 */}
-        <div style={{marginBottom:18}}>
-          <div style={{fontSize:11,fontWeight:600,color:"#64748B",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:10}}>音声キャラクター（VOICEVOX）</div>
-          <div style={{display:"flex",flexDirection:"column",gap:5}}>
-            {VOICES.map(v => (
-              <button key={v.id} onClick={() => setS(p => ({...p,voice:v.id}))} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 12px",borderRadius:10,border:`1.5px solid ${S.voice===v.id?ac.main:"#E2E8F0"}`,background:S.voice===v.id?ac.light:"#FAFAFA",cursor:"pointer",textAlign:"left",transition:"all 0.15s"}}>
-                <span style={{fontSize:15}}>{v.emoji}</span>
-                <div>
-                  <div style={{fontSize:12,fontWeight:600,color:S.voice===v.id?ac.main:"#1E293B"}}>{v.label}</div>
-                  <div style={{fontSize:11,color:"#94A3B8"}}>{v.desc}</div>
-                </div>
-              </button>
-            ))}
+          <div style={{fontSize:11,fontWeight:600,color:"#64748B",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8}}>音声・音量</div>
+          <div style={{background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:11,padding:"12px 14px",display:"flex",alignItems:"flex-start",gap:10}}>
+            <span style={{fontSize:18,flexShrink:0}}>🔇</span>
+            <div>
+              <div style={{fontSize:12,fontWeight:600,color:"#475569",marginBottom:3}}>Webアプリ版では音声は非対応です</div>
+              <div style={{fontSize:11,color:"#94A3B8",lineHeight:1.7}}>
+                VOICEVOX による音声合成・音量調整は<br/>
+                iOS / Android / PC のアプリ版で利用できます。
+              </div>
+            </div>
           </div>
         </div>
 
@@ -894,6 +1075,50 @@ function SettingsPanel({ S, setS, apiConfig, companion, profile, msgs, onClose, 
             </div>
           ))}
           <div style={{fontSize:10,color:"#94A3B8",marginTop:4}}>※ 赤レベル検知時は設定に関わらず相談窓口を表示します</div>
+        </div>
+
+        {/* 会話スタイル設定（Layer A） */}
+        <div style={{marginBottom:18}}>
+          <div style={{fontSize:11,fontWeight:600,color:"#64748B",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:6}}>会話スタイル</div>
+          <div style={{fontSize:11,color:"#94A3B8",marginBottom:10,lineHeight:1.6}}>今どんなふうに話したいか選んでください。「自動」にすると会話の流れから切り替わります。</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
+            {Object.values(CONV_MODES).map(m => (
+              <button
+                key={m.id}
+                onClick={() => { setConvMode(m.id); setAutoMode(false); }}
+                style={{
+                  display:"flex", alignItems:"center", gap:10,
+                  padding:"10px 13px", borderRadius:11,
+                  border:`1.5px solid ${convMode===m.id&&!autoMode?ac.main:"#E2E8F0"}`,
+                  background:convMode===m.id&&!autoMode?ac.light:"#FAFAFA",
+                  cursor:"pointer", textAlign:"left", transition:"all 0.15s",
+                }}
+              >
+                <span style={{fontSize:18,flexShrink:0}}>{m.icon}</span>
+                <div>
+                  <div style={{fontSize:13,fontWeight:convMode===m.id&&!autoMode?700:500,color:convMode===m.id&&!autoMode?ac.main:"#1E293B"}}>{m.label}</div>
+                  <div style={{fontSize:11,color:"#94A3B8",marginTop:1}}>{m.desc}</div>
+                </div>
+                {convMode===m.id&&!autoMode && (
+                  <div style={{marginLeft:"auto",width:8,height:8,borderRadius:"50%",background:ac.main,flexShrink:0}} />
+                )}
+              </button>
+            ))}
+          </div>
+          {/* 自動切替トグル */}
+          <div
+            onClick={() => setAutoMode(p => !p)}
+            style={{display:"flex",alignItems:"center",gap:9,padding:"10px 13px",borderRadius:11,border:`1.5px solid ${autoMode?ac.main:"#E2E8F0"}`,background:autoMode?ac.light:"#FAFAFA",cursor:"pointer",transition:"all 0.15s"}}
+          >
+            <span style={{fontSize:18}}>✦</span>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:autoMode?700:500,color:autoMode?ac.main:"#1E293B"}}>自動（会話から判定）</div>
+              <div style={{fontSize:11,color:"#94A3B8",marginTop:1}}>話の内容から自動でスタイルを切り替えます</div>
+            </div>
+            <div style={{width:36,height:20,borderRadius:10,background:autoMode?ac.main:"#CBD5E1",position:"relative",transition:"all 0.25s",flexShrink:0}}>
+              <div style={{position:"absolute",top:3,left:autoMode?16:3,width:14,height:14,borderRadius:"50%",background:"#FFF",transition:"all 0.25s"}} />
+            </div>
+          </div>
         </div>
 
         <button onClick={onClose} style={{width:"100%",padding:"12px 0",borderRadius:12,border:"none",background:ac.main,color:"#FFF",fontWeight:700,fontSize:14,cursor:"pointer"}}>閉じる</button>
@@ -968,6 +1193,9 @@ export default function AICompanionApp() {
   const [loading,      setLoading]      = useState(false);
   const [mode,         setMode]         = useState("NORMAL");
   const [cl,           setCl]           = useState("NONE");
+  const [convMode,     setConvMode]     = useState(() => lsGet("convMode","friend"));
+  const [autoMode,     setAutoMode]     = useState(() => lsGet("autoMode", true));
+  const [checkInDone,  setCheckInDone]  = useState(() => { try { return !!sessionStorage.getItem("aico_checkin"); } catch { return false; } });
   const [showHotline,  setShowHotline]  = useState(false);
   const [expanded,     setExpanded]     = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -996,6 +1224,8 @@ export default function AICompanionApp() {
   useEffect(() => { lsSet("companion", companion); }, [companion]);
   useEffect(() => { lsSet("profile",   profile);   }, [profile]);
   useEffect(() => { lsSet("settings",  S);         }, [S]);
+  useEffect(() => { lsSet("convMode",  convMode);  }, [convMode]);
+  useEffect(() => { lsSet("autoMode",  autoMode);  }, [autoMode]);
   useEffect(() => { lsSet("msgs",      msgs);      }, [msgs]);
   useEffect(() => {
     lsSet("apiMainEngine",  apiConfig.mainEngine);
@@ -1024,7 +1254,11 @@ export default function AICompanionApp() {
     setCompanion({ name, emoji:"🌱" });
     setProfile({ un, interests:na.interests||[], rs:na.rs||[], cs:na.cs||"default", pem:na.pem||"default" });
     const greet = `${name}！\nいい名前だね。気に入ったよ！よろしくね、${un}！\n\n${intNames.length > 0 ? `${intNames.slice(0,3).join("、")}が好きなんだね！これからいろいろ話そうよ。` : "これからよろしくね。何でも話しかけてよ！"}`;
-    setMsgs([{ id:1, role:"ai", text:greet, mode:"NORMAL" }]);
+    setMsgs([
+      { id:1, role:"ai", text:greet, mode:"NORMAL" },
+      { id:2, role:"ai", text:`ちなみに……今日はどんな感じ？
+なんとなくでいいよ。`, mode:"NORMAL", isCheckIn:true },
+    ]);
     histRef.current = [];
     setPhase("chat");
   };
@@ -1044,10 +1278,9 @@ export default function AICompanionApp() {
     const { key, value } = action;
     setS(p => {
       const n = {...p};
-      if (key === "theme"  && THEMES[value])       n.theme  = value;
-      if (key === "accent" && ACCENTS[value])       n.accent = value;
-      if (key === "voice"  && VOICES.find(v => v.id === value)) n.voice = value;
-      if (key === "volume") { const v = parseInt(value); if (!isNaN(v)) n.volume = Math.min(100, Math.max(0, v)); }
+      if (key === "theme"  && THEMES[value])  n.theme  = value;
+      if (key === "accent" && ACCENTS[value]) n.accent = value;
+      // voice / volume はWebアプリ版では非対応
       return n;
     });
   };
@@ -1056,6 +1289,19 @@ export default function AICompanionApp() {
 
   const sendMessage = async (text) => {
     if (!text.trim() || loading) return;
+
+    // Layer B：チェックイン返答からモードを初期設定
+    if (!checkInDone) {
+      try { sessionStorage.setItem("aico_checkin","1"); } catch {}
+      setCheckInDone(true);
+      const inferred = inferConvMode(text, convMode);
+      if (inferred !== convMode) setConvMode(inferred);
+    } else if (autoMode) {
+      // Layer C：会話の流れから自動推定（チェックイン後も継続）
+      const inferred = inferConvMode(text, convMode);
+      if (inferred !== convMode) setConvMode(inferred);
+    }
+
     setMsgs(p => [...p, { id:Date.now(), role:"user", text:text.trim() }]);
     setInput(""); setExpanded(false); setLoading(true);
 
@@ -1084,7 +1330,7 @@ export default function AICompanionApp() {
     const apiKey = apiConfig.keys?.[engId] || "";  // ← ユーザーのAPIキー
 
     try {
-      const aiText = await callAI(engId, model, apiKey, buildPrompt(companion, nm, profile, S) + extra, histRef.current, phase);
+      const aiText = await callAI(engId, model, apiKey, buildPrompt(companion, nm, profile, S, nm === 'NORMAL' ? convMode : convMode) + extra, histRef.current, phase);
       const action = parseSettingAction(aiText);
       if (action) applySettingAction(action);
       const clean = action ? aiText.replace(/\{"action":"set_setting","key":"[^"]+","value":"[^"]+"\}/, "").trim() : aiText;
@@ -1364,6 +1610,8 @@ export default function AICompanionApp() {
           onClose={() => setShowSettings(false)}
           onOpenAPISetup={() => setShowAPISetup(true)}
           onOpenErrorLog={() => { setShowSettings(false); setShowErrorLog(true); }}
+          convMode={convMode} setConvMode={setConvMode}
+          autoMode={autoMode} setAutoMode={setAutoMode}
         />
       )}
       {showErrorLog && <ErrorLogPanel onClose={() => setShowErrorLog(false)} />}
