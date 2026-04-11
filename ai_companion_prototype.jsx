@@ -125,9 +125,15 @@ async function decryptData(b64, password) {
   return new TextDecoder().decode(plain);
 }
 async function exportCompanionData(companion, profile, msgs, settings, password) {
+  // 長期記憶サマリーをエクスポートに含める
+  let longTermMemory = [];
+  try {
+    const raw = localStorage.getItem("aico_longTermMemory");
+    if (raw) longTermMemory = JSON.parse(raw);
+  } catch {}
   const payload = JSON.stringify({
     version:EXPORT_VERSION, exportedAt:new Date().toISOString(),
-    companion, profile, msgs, settings,
+    companion, profile, msgs, settings, longTermMemory,
   });
   const enc = await encryptData(payload, password);
   return JSON.stringify({format:"aico-companion",v:EXPORT_VERSION,data:enc});
@@ -135,7 +141,12 @@ async function exportCompanionData(companion, profile, msgs, settings, password)
 async function importCompanionData(jsonStr, password) {
   const p = JSON.parse(jsonStr);
   if (p.format !== "aico-companion") throw new Error("このファイルはコンパニオンデータではありません");
-  return JSON.parse(await decryptData(p.data, password));
+  const data = JSON.parse(await decryptData(p.data, password));
+  // 長期記憶サマリーをlocalStorageに復元
+  if (data.longTermMemory && data.longTermMemory.length > 0) {
+    try { localStorage.setItem("aico_longTermMemory", JSON.stringify(data.longTermMemory)); } catch {}
+  }
+  return data;
 }
 
 
@@ -317,6 +328,48 @@ async function callAI(engineId, model, apiKey, systemPrompt, messages, phase = "
 
 // ━━━ システムプロンプト生成 ━━━
 
+// ━━━ 長期記憶サマリー生成 ━━━
+
+function getLongTermMemory() {
+  try {
+    const raw = localStorage.getItem("aico_longTermMemory");
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+async function generateLTMSummary(engineId, model, apiKey, companion, profile, recentMsgs) {
+  const userMsgs = recentMsgs.filter(m => m.role === "user").map(m => m.text).slice(-20).join("
+");
+  if (!userMsgs) return null;
+  const prompt = `以下はユーザー「${profile.un || "あなた"}」とAIコンパニオン「${companion.name}」の最近の会話です。
+ユーザーについて長期的に覚えておくべき重要な情報を、簡潔なJSON配列で出力してください。
+出力はJSONのみ。説明文は不要。
+
+会話内容：
+${userMsgs}
+
+出力形式：{"facts":["事実1","事実2"],"relationship":"関係性の状態の一言"}`;
+  try {
+    const text = await callAI(engineId, model, apiKey, "あなたは会話分析AIです。指定された形式のJSONのみを返してください。", [{role:"user",content:prompt}]);
+    const json = text.match(/\{[\s\S]*\}/)?.[0];
+    if (!json) return null;
+    const parsed = JSON.parse(json);
+    const entry = {
+      id: `mem_${Date.now()}`,
+      ts: new Date().toISOString(),
+      conv_count: parseInt(localStorage.getItem("aico_convCount") || "0"),
+      facts: parsed.facts || [],
+      relationship: parsed.relationship || "",
+      prompts_version: "1.0",
+    };
+    const existing = getLongTermMemory();
+    existing.push(entry);
+    if (existing.length > 200) existing.splice(0, existing.length - 200);
+    localStorage.setItem("aico_longTermMemory", JSON.stringify(existing));
+    return entry;
+  } catch { return null; }
+}
+
 // ━━━ 会話モード定義 ━━━
 
 const CONV_MODES = {
@@ -399,6 +452,12 @@ ${HOTLINES}`
   const T = THEMES[appSettings.theme] || THEMES.light;
   const settingsCtx = `【現在のアプリ設定】テーマ:${T.name}。ユーザーが設定変更を依頼した場合は{"action":"set_setting","key":"theme/accent","value":"値"}を返してください。（音声・音量はWebアプリ版では非対応）`;
 
+  // 長期記憶サマリーを組み込む
+  const ltmEntries = getLongTermMemory().slice(-5); // 直近5件
+  const ltmText = ltmEntries.length > 0
+    ? "\n【長期記憶・覚えていること】\n" + ltmEntries.flatMap(e => e.facts).slice(-15).join("\n")
+    : "";
+
   return `あなたは「${companion.name}」というAIコンパニオンです。ユーザーを「${profile.un || "あなた"}」と呼んでください。
 
 【絶対原則・変更不可】
@@ -412,7 +471,7 @@ ${HOTLINES}`
 【パーソナリティ探索】${probe}
 【コーチング姿勢】${profile.cs === "strict" ? "甘やかさない・厳しく正直に（コーチモード時のみ）" : profile.cs === "gentle" ? "やさしく包みながら（コーチモード時のみ）" : "コンパニオンの性格に委ねる"}
 【${convModeLabel}】${modeInst}
-${settingsCtx}`.trim();
+${settingsCtx}${ltmText}`.trim();
 }
 
 function parseSettingAction(text) {
@@ -759,6 +818,7 @@ function DataManagementSection({ companion, profile, msgs, S, ac }) {
   const [imMsg,     setImMsg]     = useState("");
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [resetConfirm, setResetConfirm] = useState(null); // null | "msgs" | "all"
   const fileRef = useRef(null);
 
   // エクスポート先を記憶
@@ -961,23 +1021,42 @@ function DataManagementSection({ companion, profile, msgs, S, ac }) {
     ),
 
     /* ── リセット ── */
-    createElement("div", {style:{display:"flex",gap:7,marginBottom:6}},
-      createElement("button", {
-        onClick:()=>{
-          ["msgs","history"].forEach(k=>{try{localStorage.removeItem("aico_"+k);}catch{}});
-          alert("会話履歴を削除しました。ページを再読み込みしてください。");
-        },
-        style:{flex:1,padding:"8px 0",borderRadius:9,border:"1.5px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontWeight:600,fontSize:12,cursor:"pointer"}
-      }, "会話履歴を削除"),
-      createElement("button", {
-        onClick:()=>{
-          try{Object.keys(localStorage).filter(k=>k.startsWith("aico_")).forEach(k=>localStorage.removeItem(k));}catch{}
-          try{sessionStorage.clear();}catch{}
-          alert("リセットしました。ページを再読み込みしてください。");
-        },
-        style:{flex:1,padding:"8px 0",borderRadius:9,border:"1.5px solid #E2E8F0",background:"#F8FAFC",color:"#64748B",fontWeight:600,fontSize:12,cursor:"pointer"}
-      }, "全データリセット")
-    ),
+    resetConfirm === "msgs"
+      ? createElement("div", {style:{background:"#FEF2F2",border:"1.5px solid #FECACA",borderRadius:9,padding:"10px 12px",marginBottom:6}},
+          createElement("div",{style:{fontSize:12,fontWeight:600,color:"#DC2626",marginBottom:6}},"本当に削除しますか？この操作は取り消せません。"),
+          createElement("div",{style:{display:"flex",gap:7}},
+            createElement("button",{onClick:()=>{
+              ["msgs","history","longTermMemory"].forEach(k=>{try{localStorage.removeItem("aico_"+k);}catch{}});
+              setResetConfirm(null);
+              alert("削除しました。ページを再読み込みしてください。");
+            },style:{flex:1,padding:"8px 0",borderRadius:8,border:"none",background:"#DC2626",color:"#FFF",fontWeight:700,fontSize:12,cursor:"pointer"}},"削除する"),
+            createElement("button",{onClick:()=>setResetConfirm(null),style:{flex:1,padding:"8px 0",borderRadius:8,border:"1.5px solid #E2E8F0",background:"#FFF",color:"#64748B",fontSize:12,cursor:"pointer"}},"キャンセル")
+          )
+        )
+      : resetConfirm === "all"
+      ? createElement("div", {style:{background:"#FEF2F2",border:"1.5px solid #FECACA",borderRadius:9,padding:"10px 12px",marginBottom:6}},
+          createElement("div",{style:{fontSize:12,fontWeight:600,color:"#DC2626",marginBottom:4}},"⚠ すべてのデータを削除します"),
+          createElement("div",{style:{fontSize:11,color:"#7F1D1D",marginBottom:8,lineHeight:1.6}},"コンパニオンとの記憶・人格・会話履歴がすべて消えます。この操作は取り消せません。バックアップはお済みですか？"),
+          createElement("div",{style:{display:"flex",gap:7}},
+            createElement("button",{onClick:()=>{
+              try{Object.keys(localStorage).filter(k=>k.startsWith("aico_")).forEach(k=>localStorage.removeItem(k));}catch{}
+              try{sessionStorage.clear();}catch{}
+              setResetConfirm(null);
+              alert("リセットしました。ページを再読み込みしてください。");
+            },style:{flex:1,padding:"8px 0",borderRadius:8,border:"none",background:"#DC2626",color:"#FFF",fontWeight:700,fontSize:12,cursor:"pointer"}},"完全に削除する"),
+            createElement("button",{onClick:()=>setResetConfirm(null),style:{flex:1,padding:"8px 0",borderRadius:8,border:"1.5px solid #E2E8F0",background:"#FFF",color:"#64748B",fontSize:12,cursor:"pointer"}},"キャンセル")
+          )
+        )
+      : createElement("div", {style:{display:"flex",gap:7,marginBottom:6}},
+          createElement("button", {
+            onClick:()=>setResetConfirm("msgs"),
+            style:{flex:1,padding:"8px 0",borderRadius:9,border:"1.5px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontWeight:600,fontSize:12,cursor:"pointer"}
+          }, "会話履歴を削除"),
+          createElement("button", {
+            onClick:()=>setResetConfirm("all"),
+            style:{flex:1,padding:"8px 0",borderRadius:9,border:"1.5px solid #E2E8F0",background:"#F8FAFC",color:"#64748B",fontWeight:600,fontSize:12,cursor:"pointer"}
+          }, "全データリセット")
+        ),
     createElement("div",{style:{fontSize:10,color:"#94A3B8",lineHeight:1.6}},
       "※ APIキーはタブを閉じると自動的に消えます（セキュリティ保護）"
     )
@@ -1198,10 +1277,13 @@ export default function AICompanionApp() {
   const [checkInDone,  setCheckInDone]  = useState(() => { try { return !!sessionStorage.getItem("aico_checkin"); } catch { return false; } });
   const [showHotline,  setShowHotline]  = useState(false);
   const [expanded,     setExpanded]     = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [showAPISetup, setShowAPISetup] = useState(false);
-  const [showErrorLog, setShowErrorLog] = useState(false);
-  const [toastEntry,  setToastEntry]  = useState(null);
+  const [showSettings,   setShowSettings]   = useState(false);
+  const [showAPISetup,   setShowAPISetup]   = useState(false);
+  const [showErrorLog,   setShowErrorLog]   = useState(false);
+  const [toastEntry,     setToastEntry]     = useState(null);
+  const [convCount,      setConvCount]      = useState(() => lsGet("convCount", 0));
+  const [backupReminder, setBackupReminder] = useState(false);
+  const [ltmToast,       setLtmToast]       = useState(false); // 長期記憶生成通知
   const [S, setS] = useState(() => lsGet("settings", {
     theme:"light", accent:"blue", volume:80, voice:"zundamon",
     showBlue:true, showYellow:true, showRed:true,
@@ -1226,6 +1308,7 @@ export default function AICompanionApp() {
   useEffect(() => { lsSet("settings",  S);         }, [S]);
   useEffect(() => { lsSet("convMode",  convMode);  }, [convMode]);
   useEffect(() => { lsSet("autoMode",  autoMode);  }, [autoMode]);
+  useEffect(() => { lsSet("convCount", convCount); }, [convCount]);
   useEffect(() => { lsSet("msgs",      msgs);      }, [msgs]);
   useEffect(() => {
     lsSet("apiMainEngine",  apiConfig.mainEngine);
@@ -1338,7 +1421,6 @@ export default function AICompanionApp() {
       lsSet("history", histRef.current);
       setMsgs(p => [...p, { id:Date.now()+1, role:"ai", text:clean||"設定したよ！", mode:nm, sa:!!action }]);
     } catch(err) {
-      // sendMessage内でcallAIが失敗した場合（未ログ分もフォールバック記録）
       const last = getLogs().slice(-1)[0];
       if (!last || Date.now() - new Date(last.ts).getTime() > 500) {
         const logged = recordLog(ERR.API_UNKNOWN, { engine: engId, message: err.message }, phase);
@@ -1352,7 +1434,23 @@ export default function AICompanionApp() {
         text: `エラーが発生しました: ${err.message}\n\n⚙ボタン → AIエンジン設定からAPIキーを確認してみてね。`,
         mode: nm,
       }]);
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+      // 会話カウントを更新
+      const newCount = convCount + 1;
+      setConvCount(newCount);
+      // 20往復ごとに長期記憶サマリーを自動生成
+      if (newCount % 20 === 0) {
+        const engId2  = apiConfig.mainEngine || "claude";
+        const model2  = apiConfig.models?.[engId2] || "claude-sonnet-4-20250514";
+        const apiKey2 = apiConfig.keys?.[engId2] || "";
+        generateLTMSummary(engId2, model2, apiKey2, companion, profile, msgs).then(entry => {
+          if (entry) { setLtmToast(true); setTimeout(() => setLtmToast(false), 4000); }
+        });
+      }
+      // 100往復ごとにバックアップリマインダー
+      if (newCount % 100 === 0) setBackupReminder(true);
+    }
   };
 
   // ── 危機インジケーター ──
@@ -1616,6 +1714,43 @@ export default function AICompanionApp() {
       )}
       {showErrorLog && <ErrorLogPanel onClose={() => setShowErrorLog(false)} />}
       <ErrorToast entry={toastEntry} onDismiss={() => setToastEntry(null)} />
+
+      {/* バックアップリマインダー */}
+      {backupReminder && (
+        <div style={{position:"absolute",inset:0,background:"rgba(15,23,42,0.6)",zIndex:280,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:"#FFF",borderRadius:18,padding:22,maxWidth:320,width:"100%",boxShadow:"0 20px 50px rgba(0,0,0,0.25)"}}>
+            <div style={{fontSize:24,textAlign:"center",marginBottom:10}}>💾</div>
+            <div style={{fontSize:15,fontWeight:700,color:"#1E293B",textAlign:"center",marginBottom:8}}>
+              {companion.name}とのバックアップを取りましょう
+            </div>
+            <div style={{fontSize:12,color:"#64748B",lineHeight:1.8,textAlign:"center",marginBottom:16}}>
+              会話が100回を超えました。<br/>
+              大切な記憶と人格データを<br/>
+              バックアップしておくことをお勧めします。
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={() => { setBackupReminder(false); setShowSettings(true); }}
+                style={{flex:1,padding:"11px 0",borderRadius:11,border:"none",background:ac.main,color:"#FFF",fontWeight:700,fontSize:13,cursor:"pointer"}}>
+                今すぐバックアップ
+              </button>
+              <button onClick={() => setBackupReminder(false)}
+                style={{padding:"11px 14px",borderRadius:11,border:"1.5px solid #E2E8F0",background:"#FFF",color:"#64748B",fontSize:13,cursor:"pointer"}}>
+                後で
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 長期記憶生成完了トースト */}
+      {ltmToast && (
+        <div style={{position:"absolute",bottom:80,left:12,right:12,zIndex:250,animation:"slideUp 0.3s ease"}}>
+          <div style={{background:"#1E293B",borderRadius:14,padding:"11px 14px",display:"flex",alignItems:"center",gap:10,boxShadow:"0 8px 24px rgba(0,0,0,0.2)"}}>
+            <span style={{fontSize:16}}>🧠</span>
+            <div style={{flex:1,fontSize:12,color:"#F8FAFC"}}>記憶を整理しました。{companion.name}はあなたのことをより深く覚えています。</div>
+          </div>
+        </div>
+      )}
 
       {/* ヘッダー */}
       <div style={{padding:"11px 13px",display:"flex",alignItems:"center",gap:9,borderBottom:`1px solid ${T.panelBorder}`,background:T.headerBg,boxShadow:"0 1px 3px rgba(0,0,0,0.05)"}}>
