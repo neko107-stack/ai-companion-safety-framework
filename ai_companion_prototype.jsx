@@ -338,17 +338,9 @@ function getLongTermMemory() {
 }
 
 async function generateLTMSummary(engineId, model, apiKey, companion, profile, recentMsgs) {
-  const userMsgs = recentMsgs.filter(m => m.role === "user").map(m => m.text).slice(-20).join("
-");
+  const userMsgs = recentMsgs.filter(m => m.role === "user").map(m => m.text).slice(-20).join("\n");
   if (!userMsgs) return null;
-  const prompt = `以下はユーザー「${profile.un || "あなた"}」とAIコンパニオン「${companion.name}」の最近の会話です。
-ユーザーについて長期的に覚えておくべき重要な情報を、簡潔なJSON配列で出力してください。
-出力はJSONのみ。説明文は不要。
-
-会話内容：
-${userMsgs}
-
-出力形式：{"facts":["事実1","事実2"],"relationship":"関係性の状態の一言"}`;
+  const prompt = `以下はユーザー「${profile.un || "あなた"}」とAIコンパニオン「${companion.name}」の最近の会話です。ユーザーについて長期的に覚えておくべき重要な情報を、簡潔なJSON配列で出力してください。出力はJSONのみ。説明文は不要。\n\n会話内容：\n${userMsgs}\n\n出力形式：{"facts":["事実1","事実2"],"relationship":"関係性の状態の一言"}`;
   try {
     const text = await callAI(engineId, model, apiKey, "あなたは会話分析AIです。指定された形式のJSONのみを返してください。", [{role:"user",content:prompt}]);
     const json = text.match(/\{[\s\S]*\}/)?.[0];
