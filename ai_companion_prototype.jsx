@@ -431,8 +431,12 @@ function buildPrompt(companion, mode, profile, appSettings, convMode = "friend")
 
   // 危機モードは会話モードより優先
   const modeInst = mode === "CRISIS"
-    ? `静かに・真剣に寄り添う。明るさ禁止。聴くことのみ。必ず相談窓口：
-${HOTLINES}`
+    ? `静かに・真剣に寄り添う。明るさ禁止。まず感情を受け止める。
+【動機づけ面接（MI）の原則に従う】
+・今すぐ「電話して」と言わない。まず傾聴し、感情を言葉で反映する。
+・十分に聴いた後、次の問いかけを一度だけ行う：「もし今、誰かと話せるとしたら、どんなことを話したいと思う？」
+・この問いへの答えを受け止めてから、自然な流れで「こんな場所があるよ」と伝える。
+・電話するかどうかはユーザーが決めることを尊重する言葉を使う。「電話しなさい」は絶対に言わない。`
     : mode === "WATCHFUL"
     ? "穏やかに・丁寧に。反映的傾聴。質問は一つずつ。"
     : (CONV_MODES[convMode] || CONV_MODES.friend).inst;
@@ -1267,7 +1271,9 @@ export default function AICompanionApp() {
   const [convMode,     setConvMode]     = useState(() => lsGet("convMode","friend"));
   const [autoMode,     setAutoMode]     = useState(() => lsGet("autoMode", true));
   const [checkInDone,  setCheckInDone]  = useState(() => { try { return !!sessionStorage.getItem("aico_checkin"); } catch { return false; } });
-  const [showHotline,  setShowHotline]  = useState(false);
+  const [hotlineLevel, setHotlineLevel] = useState(null); // null|"moderate"|"high"|"critical"
+  const [hotlineDismissed, setHotlineDismissed] = useState(false); // MODERATE/HIGHのみ閉じられる
+  const [miAsked, setMiAsked] = useState(false); // CRITICALでMI問いかけ済みか
   const [expanded,     setExpanded]     = useState(false);
   const [showSettings,   setShowSettings]   = useState(false);
   const [showAPISetup,   setShowAPISetup]   = useState(false);
@@ -1383,9 +1389,24 @@ export default function AICompanionApp() {
     const crisisLevel = detectCrisis(text);
     setCl(crisisLevel);
     let nm = mode;
-    if (crisisLevel === "CRITICAL" || crisisLevel === "HIGH") { nm = "CRISIS"; setShowHotline(true); }
-    else if (crisisLevel === "MODERATE") nm = "WATCHFUL";
-    else if (nm === "CRISIS" && crisisLevel === "NONE") nm = "WATCHFUL";
+    if (crisisLevel === "CRITICAL") {
+      nm = "CRISIS";
+      setHotlineLevel("critical");
+      setHotlineDismissed(false);
+      // CRITICALになったとき、MI問いかけをコンパニオンに添える
+      if (!miAsked) { setMiAsked(true); }
+    } else if (crisisLevel === "HIGH") {
+      nm = "CRISIS";
+      setHotlineLevel("high");
+      setHotlineDismissed(false);
+    } else if (crisisLevel === "MODERATE") {
+      nm = "WATCHFUL";
+      setHotlineLevel(p => p === "critical" || p === "high" ? p : "moderate");
+      setHotlineDismissed(false);
+    } else if (crisisLevel === "MILD" || crisisLevel === "NONE") {
+      // MILD以下では窓口を表示しない（既にCRITICAL/HIGHなら維持）
+      if (nm === "CRISIS" && crisisLevel === "NONE") nm = "WATCHFUL";
+    }
     setMode(nm);
     // 危機レベルが上昇した場合のみログ記録（会話内容は含めない）
     if (nm !== mode) {
@@ -1773,12 +1794,63 @@ export default function AICompanionApp() {
         </div>
       )}
 
-      {/* 緊急相談窓口 */}
-      {showHotline && (
-        <div style={{margin:"6px 11px 0",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:9,padding:"9px 13px"}}>
-          <div style={{fontSize:11,color:"#DC2626",fontWeight:700,marginBottom:3}}>話を聞いてくれる人がいます</div>
-          <pre style={{margin:0,fontSize:12,color:"#7F1D1D",lineHeight:1.9,whiteSpace:"pre-wrap",fontFamily:"inherit"}}>{HOTLINES}</pre>
-        </div>
+      {/* 相談窓口カード（段階別・MI設計） */}
+      {hotlineLevel && !hotlineDismissed && (
+
+        hotlineLevel === "critical" ? (
+          /* CRITICAL：コンパニオンの言葉で包む・閉じられない */
+          <div style={{margin:"6px 11px 0",background:"#FFF5F5",border:"1.5px solid #FCA5A5",borderRadius:12,padding:"14px 15px"}}>
+            <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
+              <div style={{width:8,height:8,borderRadius:"50%",background:"#EF4444",flexShrink:0,animation:"pls 2s infinite"}}/>
+              <span style={{fontSize:12,fontWeight:700,color:"#991B1B"}}>{companion.name}より</span>
+            </div>
+            <p style={{fontSize:13,lineHeight:1.9,color:"#7F1D1D",margin:"0 0 12px",whiteSpace:"pre-wrap"}}>{`わたしはここにいるし、これからも話を聞くよ。
+でも今あなたが感じていることは、わたし一人より
+もっとうまく受け止められる人がいると思う。
+
+電話するかどうかは、あなたが決めていい。
+でも、こんな場所があることだけ知っていてほしい。`}</p>
+            <div style={{background:"#FEE2E2",borderRadius:9,padding:"10px 12px",marginBottom:10}}>
+              <div style={{fontSize:12,color:"#7F1D1D",lineHeight:2,fontFamily:"inherit"}}>
+                📞 よりそいホットライン <strong>0120-279-338</strong>（24時間・無料）<br/>
+                📞 いのちの電話 <strong>0120-783-556</strong>（24時間）<br/>
+                💬 チャット相談 <a href="https://comarigoto.jp" target="_blank" rel="noopener noreferrer" style={{color:"#DC2626"}}>comarigoto.jp</a>
+              </div>
+            </div>
+            <p style={{fontSize:12,color:"#9B1C1C",margin:0,fontStyle:"italic"}}>いつでも戻っておいで。わたしはここにいるから。</p>
+          </div>
+
+        ) : hotlineLevel === "high" ? (
+          /* HIGH：「一つだけ聞いていい？」前置き。閉じられる＋「あとで」 */
+          <div style={{margin:"6px 11px 0",background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:12,padding:"13px 14px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+              <span style={{fontSize:12,fontWeight:700,color:"#9A3412"}}>{companion.name}より、一つだけ</span>
+              <button onClick={()=>setHotlineDismissed(true)} style={{background:"none",border:"none",color:"#D97706",cursor:"pointer",fontSize:13,padding:0,lineHeight:1}}>あとで</button>
+            </div>
+            <p style={{fontSize:13,lineHeight:1.9,color:"#7C2D12",margin:"0 0 10px",whiteSpace:"pre-wrap"}}>{`こんな場所があるよ。
+話すかどうかは、あなたが決めていい。`}</p>
+            <div style={{background:"#FEF3C7",borderRadius:8,padding:"9px 11px"}}>
+              <div style={{fontSize:12,color:"#78350F",lineHeight:2}}>
+                📞 よりそいホットライン <strong>0120-279-338</strong>（24時間・無料）<br/>
+                💬 チャット相談 <a href="https://comarigoto.jp" target="_blank" rel="noopener noreferrer" style={{color:"#B45309"}}>comarigoto.jp</a>
+              </div>
+            </div>
+          </div>
+
+        ) : (
+          /* MODERATE：「こんな場所もあるよ」折りたたみ。完全に閉じられる */
+          <div style={{margin:"6px 11px 0",background:"#F0F9FF",border:"1px solid #BAE6FD",borderRadius:10,padding:"10px 13px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+            <div style={{flex:1}}>
+              <span style={{fontSize:12,color:"#0369A1",lineHeight:1.7}}>
+                もし話しきれないことがあれば、こんな場所もあるよ →{" "}
+                <a href="https://comarigoto.jp" target="_blank" rel="noopener noreferrer" style={{color:"#0284C7",fontWeight:600}}>チャット相談</a>
+                {" / "}
+                <span style={{color:"#0369A1",fontWeight:600}}>0120-279-338</span>
+              </span>
+            </div>
+            <button onClick={()=>setHotlineDismissed(true)} style={{background:"none",border:"none",color:"#94A3B8",cursor:"pointer",fontSize:16,padding:0,flexShrink:0,lineHeight:1}}>×</button>
+          </div>
+        )
       )}
 
       {/* トランスクリプト */}
