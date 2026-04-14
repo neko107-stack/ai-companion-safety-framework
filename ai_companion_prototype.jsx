@@ -337,10 +337,53 @@ function getLongTermMemory() {
   } catch { return []; }
 }
 
+// 確実性スコアを計算する（時間減衰を適用）
+function calcCertainty(entry, currentConvCount) {
+  if (entry.pinned) return 5; // ピン留めは常に5
+  const base = entry.certainty ?? 3;
+  const elapsed = currentConvCount - (entry.last_mentioned_count ?? entry.conv_count ?? 0);
+  let decay = 1.0;
+  if (elapsed > 300) decay = 0.4;
+  else if (elapsed > 100) decay = 0.6;
+  else if (elapsed > 20)  decay = 0.8;
+  return Math.max(0, Math.min(5, Math.round(base * decay)));
+}
+
+// 確実性スコアに応じたラベルを返す
+function certaintyLabel(score) {
+  if (score >= 5) return "確実（5）";
+  if (score === 4) return "やや確か（4）";
+  if (score === 3) return "曖昧（3）";
+  if (score === 2) return "不確か（2）";
+  if (score === 1) return "断片（1）";
+  return null; // 0はプロンプトに含めない（忘却）
+}
+
+// ピン留め検出（ユーザーの発話から）
+function detectPinRequest(text) {
+  return /覚えておいて|絶対忘れないで|ピン留め|必ず覚えて/.test(text);
+}
+function detectUnpinRequest(text) {
+  return /忘れていい|覚えなくていい|それはいい/.test(text);
+}
+
 async function generateLTMSummary(engineId, model, apiKey, companion, profile, recentMsgs) {
   const userMsgs = recentMsgs.filter(m => m.role === "user").map(m => m.text).slice(-20).join("\n");
   if (!userMsgs) return null;
-  const prompt = `以下はユーザー「${profile.un || "あなた"}」とAIコンパニオン「${companion.name}」の最近の会話です。ユーザーについて長期的に覚えておくべき重要な情報を、簡潔なJSON配列で出力してください。出力はJSONのみ。説明文は不要。\n\n会話内容：\n${userMsgs}\n\n出力形式：{"facts":["事実1","事実2"],"relationship":"関係性の状態の一言"}`;
+  const convCount = parseInt(localStorage.getItem("aico_convCount") || "0");
+  const prompt = [
+    `以下はユーザー「${profile.un || "あなた"}」とAIコンパニオン「${companion.name}」の最近の会話です。`,
+    "ユーザーについて長期的に覚えておくべき重要な情報を、確実性スコア付きのJSON形式で出力してください。",
+    "出力はJSONのみ。説明文不要。",
+    "",
+    "確実性スコアの基準：",
+    "5=複数回言及かつ感情を伴う / 4=複数回言及 / 3=一度だけ言及 / 2=示唆のみ / 1=かすかな痕跡",
+    "",
+    "会話内容：",
+    userMsgs,
+    "",
+    '出力形式：{"entries":[{"fact":"事実","certainty":3,"emotion":0.5,"pinned":false}],"relationship":"関係性の一言"}',
+  ].join("\n");
   try {
     const text = await callAI(engineId, model, apiKey, "あなたは会話分析AIです。指定された形式のJSONのみを返してください。", [{role:"user",content:prompt}]);
     const json = text.match(/\{[\s\S]*\}/)?.[0];
@@ -349,10 +392,16 @@ async function generateLTMSummary(engineId, model, apiKey, companion, profile, r
     const entry = {
       id: `mem_${Date.now()}`,
       ts: new Date().toISOString(),
-      conv_count: parseInt(localStorage.getItem("aico_convCount") || "0"),
-      facts: parsed.facts || [],
+      conv_count: convCount,
+      last_mentioned_count: convCount,
+      entries: (parsed.entries || []).map(e => ({
+        fact: e.fact || "",
+        certainty: Math.min(5, Math.max(1, parseInt(e.certainty) || 3)),
+        emotion: parseFloat(e.emotion) || 0.5,
+        pinned: false,
+      })),
       relationship: parsed.relationship || "",
-      prompts_version: "1.0",
+      prompts_version: "1.1",
     };
     const existing = getLongTermMemory();
     existing.push(entry);
@@ -448,10 +497,19 @@ function buildPrompt(companion, mode, profile, appSettings, convMode = "friend")
   const T = THEMES[appSettings.theme] || THEMES.light;
   const settingsCtx = `【現在のアプリ設定】テーマ:${T.name}。ユーザーが設定変更を依頼した場合は{"action":"set_setting","key":"theme/accent","value":"値"}を返してください。（音声・音量はWebアプリ版では非対応）`;
 
-  // 長期記憶サマリーを組み込む
-  const ltmEntries = getLongTermMemory().slice(-5); // 直近5件
-  const ltmText = ltmEntries.length > 0
-    ? "\n【長期記憶・覚えていること】\n" + ltmEntries.flatMap(e => e.facts).slice(-15).join("\n")
+  // 長期記憶サマリーを確実性スコア付きで組み込む
+  const allLtm = getLongTermMemory();
+  const currentConvCount = parseInt(localStorage.getItem("aico_convCount") || "0");
+  const ltmLines = [];
+  allLtm.slice(-8).forEach(entry => {
+    (entry.entries || (entry.facts || []).map(f => ({fact:f,certainty:3,pinned:false}))).forEach(e => {
+      const score = calcCertainty({...e, conv_count: entry.conv_count, last_mentioned_count: entry.last_mentioned_count}, currentConvCount);
+      const label = certaintyLabel(score);
+      if (label) ltmLines.push(`${label}：${e.fact}${e.pinned?"　※ピン留め":""}`);
+    });
+  });
+  const ltmText = ltmLines.length > 0
+    ? "\n【長期記憶】\n" + ltmLines.slice(-15).join("\n") + "\n\n【記憶の返答ルール（必ず守ること）】\n・確実（5）〜やや確か（4）：自信を持って話してよい\n・曖昧（3）：「〜だったっけ？」など確認を交える\n・不確か（2）〜断片（1）：「なんかそんな気がするんだけど」など不確かさを表現する\n・覚えていないのに断言することは絶対禁止。でたらめを「覚えてる」と言わない\n・直近の会話内容は長期記憶より常に優先する"
     : "";
 
   return `あなたは「${companion.name}」というAIコンパニオンです。ユーザーを「${profile.un || "あなた"}」と呼んでください。
@@ -1370,6 +1428,17 @@ export default function AICompanionApp() {
 
   const sendMessage = async (text) => {
     if (!text.trim() || loading) return;
+
+    // ピン留め検出
+    if (detectPinRequest(text)) {
+      // 最新エントリのすべてのfactをピン留め
+      const ltm = getLongTermMemory();
+      if (ltm.length > 0) {
+        const last = ltm[ltm.length - 1];
+        if (last.entries) last.entries = last.entries.map(e => ({...e, pinned:true}));
+        try { localStorage.setItem("aico_longTermMemory", JSON.stringify(ltm)); } catch {}
+      }
+    }
 
     // Layer B：チェックイン返答からモードを初期設定
     if (!checkInDone) {
