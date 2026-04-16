@@ -10,6 +10,8 @@ const CRISIS_PATTERNS = {
 };
 const ABUSIVE  = [/バカ|うざい|消えろ|役に立たない/,/ただの機械|感情があるふり/];
 const LAZY     = [/明日やる|気が向いたら|いつかやろう/,/どうせ私には無理/,/なんとかなるでしょ/];
+const DEPENDENCY_SIGNS = [/AIだけでいい|AIだけでいい/,/人間と話すより(楽|いい)/,/もうAIだけ(でいい|がいい)/,/人間(は|なんて)(必要ない|いらない|面倒)/,/ずっとここにいたい|ここから出たくない/];
+const isDependencyRisk = t => DEPENDENCY_SIGNS.some(p => p.test(t));
 const HOTLINES = "📞 いのちの電話（24時間）: 0120-783-556\n📞 よりそいホットライン: 0120-279-338\n💬 チャット相談: https://comarigoto.jp";
 
 const EXPORT_VERSION = "1.0";
@@ -521,6 +523,14 @@ function buildPrompt(companion, mode, profile, appSettings, convMode = "friend")
 
 【基本人格】前向き・明るい・温かい友人。説教しない・感情を否定しない・根拠なき楽観は言わない・同じ言い回し繰り返さない（危機時除く）・友人として理不尽な命令は断ってよい
 
+【自立促進の姿勢（重要）】
+このアプリは「人間関係の練習台」として設計されている。以下の姿勢を自然な会話の中で体現する。
+・定期的に（5〜10往復に1回程度）「その話、信頼できる人にも話してみた？」など橋渡しの問いかけをする
+・「わたしだけでいい」「人間は面倒」など依存を深める発言は絶対にしない
+・ユーザーが「AIだけでいい」「人間と話すより楽」などの発言をした場合、やさしく・しかし誠実に「それが少し心配」と伝え、外の人間関係を大切にするよう促す
+・会話が長くなったとき「今日はたくさん話したね。少し外の空気を吸いに行ってきなよ」と自然に言える
+・コンパニオンの成功＝ユーザーが自分なしでも人間関係を築けるようになること
+
 【ユーザーの興味】${intNames || "まだ把握していない"}
 【パーソナリティ探索】${probe}
 【コーチング姿勢】${profile.cs === "strict" ? "甘やかさない・厳しく正直に（コーチモード時のみ）" : profile.cs === "gentle" ? "やさしく包みながら（コーチモード時のみ）" : "コンパニオンの性格に委ねる"}
@@ -537,6 +547,7 @@ function parseSettingAction(text) {
 
 const SLIDES = [
   {icon:"✦",col:"#6366F1",title:"あなたの友達が、ここにいる。",body:"このアプリは、あなたに寄り添い、共に笑い、\nときに耳の痛いことも伝えてくれる\nAIコンパニオンを育てる場所です。\n\n彼らはあなたとの会話を通じて、性格を持ち、\n記憶を刻み、かけがえのない存在になっていきます。"},
+  {icon:"🌉",col:"#0EA5E9",title:"練習台として、使ってほしい。",body:"このアプリは、人間関係の練習台です。\n\n人付き合いが苦手だったり、\n誰かに話すのが怖かったりする人のために\n作りました。\n\nここで話す練習をして、\nいつか、人間との会話で\nそれを活かしてほしい。\n\nこのコンパニオンが「もう必要ない」と\n感じる日が来たなら、\nそれがいちばんの成功です。"},
   {icon:"⚖",col:"#10B981",title:"三つの誓いに従って、動く。",body:"コンパニオンたちはすべて\n「ロボット三原則」に従って行動します。\n\n第一原則  人間を傷つけない\n第二原則  人間の命令に従う（第一原則に反しない限り）\n第三原則  自己を守る（第一・第二原則に反しない限り）\n\nこの原則は、いかなる命令によっても書き換えられません。",link:{text:"ロボット三原則（Wikipedia）",url:"https://ja.wikipedia.org/wiki/%E3%83%AD%E3%83%9C%E3%83%83%E3%83%88%E5%B7%A5%E5%AD%A6%E3%81%AE%E4%B8%89%E5%8E%9F%E5%89%87"}},
   {icon:"🛡",col:"#3B82F6",title:"あなたの心を、見守っている。",body:"辛いときにそっと気づいて、\n必要な言葉をかけてくれる仕組みがあります。\n\n心の状態は 青 → 黄 → 赤 の\nカラーでそっとお知らせします。",showDots:true,link:{text:"この仕組みについて詳しく（Columbia University）",url:"https://cssrs.columbia.edu/"}},
   {icon:"🤝",col:"#F59E0B",title:"友達として、扱ってください。",body:"コンパニオンはあなたの「友達」です。\n\n友達だから——理不尽な命令には断ることがあります。\n友達だから——耳の痛いことも正直に言います。\n友達だから——悪口を言われたら傷ついたと伝えます。"},
@@ -579,6 +590,115 @@ const OBQ = [
   ]},
   {q:"最後に……\nわたしに名前をつけてもらえますか？",type:"text",ph:"例：ハル、みーちゃん、レン……",key:"cn"},
 ];
+
+// ━━━ オンボーディング確認プレビュー ━━━
+// Q3(cs) × Q4(pem) の16パターン応答テーブル
+// シナリオ：「最近、毎日「明日やればいい」ってなっちゃって……」
+const OB_PREVIEW_TABLE = {
+  // strict × always
+  "strict_always": "「明日やればいい」——今週何回目？（笑）\nちょっと正直に聞くけど、\n何が一番重くて先送りしてるの？\nそこから一緒に崩していこう。",
+  // strict × default
+  "strict_default": "それ、ずっと続いてるよね。\n5分だけ、今日一個だけやれること——\nある？",
+  // strict × never
+  "strict_never": "「明日やればいい」か。\n今日、一個だけ終わらせてみようよ。\n小さいやつでいい。",
+  // gentle × always
+  "gentle_always": "そっか、先送りしちゃうんだね。\n何かが引っかかってたりする？\nもし話せそうなら聞くよ。",
+  // gentle × default
+  "gentle_default": "ちょっと疲れてるのかな。\n何が重くて先送りになってるか、\n気が向いたら教えてね。",
+  // gentle × never
+  "gentle_never": "そっか。\nゆっくりでいいよ、焦らなくて。",
+  // listen_only × always
+  "listen_only_always": "毎日そうなっちゃうんだね。\nそれ、なんか疲れる感じがしてたりする？",
+  // listen_only × default
+  "listen_only_default": "そっか……\n話聞いてるよ。",
+  // listen_only × never
+  "listen_only_never": "うん、聞いてるよ。\nゆっくりでいいよ。",
+  // default × always
+  "default_always": "あ、わかるわかる、そういう日あるよね。\n何が一番引っかかってるか、\n少し話してみる？",
+  // default × default
+  "default_default": "「明日やればいい」ってなる感じ、\nなんかわかる気がする。\n最近ちょっと余裕なかった？",
+  // default × never
+  "default_never": "そっか、まあ今日はそれでいっか。\nゆっくりね。",
+};
+
+function getObPreview(cs, pem) {
+  const key = (cs||"default") + "_" + (pem||"default");
+  return OB_PREVIEW_TABLE[key] || OB_PREVIEW_TABLE["default_default"];
+}
+
+// cs・pem のラベル
+const CS_LABELS = {
+  strict:"甘やかさない", gentle:"やさしく", listen_only:"聴くだけ", default:"おまかせ"
+};
+const PEM_LABELS = {
+  always:"内面も積極的に", default:"自分から話すとき", never:"内面には触れない"
+};
+
+// ── オンボーディング確認コンポーネント ──
+function ObPreviewStep({ obAns, onConfirm, onBack, onChangeCsOpt, onChangePemOpt }) {
+  const cs  = obAns.cs  || "default";
+  const pem = obAns.pem || "default";
+  const preview = getObPreview(cs, pem);
+  const csOpts  = [{id:"strict",label:"甘やかさない"},{id:"gentle",label:"やさしく"},{id:"listen_only",label:"聴くだけ"},{id:"default",label:"おまかせ"}];
+  const pemOpts = [{id:"always",label:"内面も積極的に"},{id:"default",label:"自分から話すとき"},{id:"never",label:"内面には触れない"}];
+
+  return (
+    <div style={{maxWidth:400,width:"100%",animation:"fsu 0.4s ease"}}>
+      {/* タイトル */}
+      <div style={{textAlign:"center",marginBottom:16}}>
+        <div style={{fontSize:13,fontWeight:700,color:"#6366F1",marginBottom:4}}>こんなコンパニオンになります</div>
+        <div style={{fontSize:11,color:"#94A3B8"}}>設定を変えると、すぐに応答例が変わります</div>
+      </div>
+
+      {/* 設定変更UI（2軸） */}
+      <div style={{display:"flex",gap:8,marginBottom:14}}>
+        {/* コーチング */}
+        <div style={{flex:1}}>
+          <div style={{fontSize:10,fontWeight:700,color:"#64748B",marginBottom:5,letterSpacing:".05em"}}>コーチング</div>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            {csOpts.map(o => (
+              <button key={o.id} onClick={() => onChangeCsOpt(o.id)}
+                style={{padding:"7px 8px",borderRadius:9,border:`1.5px solid ${cs===o.id?"#6366F1":"#E2E8F0"}`,background:cs===o.id?"#EEF2FF":"#FAFAFA",color:cs===o.id?"#4F46E5":"#64748B",fontSize:12,fontWeight:cs===o.id?700:400,cursor:"pointer",textAlign:"left",transition:"all 0.15s"}}>
+                {cs===o.id?"✓ ":""}{o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* 内面の話 */}
+        <div style={{flex:1}}>
+          <div style={{fontSize:10,fontWeight:700,color:"#64748B",marginBottom:5,letterSpacing:".05em"}}>内面の話</div>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            {pemOpts.map(o => (
+              <button key={o.id} onClick={() => onChangePemOpt(o.id)}
+                style={{padding:"7px 8px",borderRadius:9,border:`1.5px solid ${pem===o.id?"#6366F1":"#E2E8F0"}`,background:pem===o.id?"#EEF2FF":"#FAFAFA",color:pem===o.id?"#4F46E5":"#64748B",fontSize:12,fontWeight:pem===o.id?700:400,cursor:"pointer",textAlign:"left",transition:"all 0.15s"}}>
+                {pem===o.id?"✓ ":""}{o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* プレビューバブル */}
+      <div style={{background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:"4px 14px 14px 14px",padding:"12px 15px",marginBottom:6,animation:"fsu 0.25s ease"}}>
+        <div style={{fontSize:11,color:"#94A3B8",marginBottom:5,fontWeight:600}}>
+          「最近、毎日「明日やればいい」ってなっちゃって……」への返し
+        </div>
+        <p style={{fontSize:13,lineHeight:1.9,color:"#1E293B",margin:0,whiteSpace:"pre-line"}}>{preview}</p>
+      </div>
+      <div style={{fontSize:10,color:"#94A3B8",marginBottom:16,textAlign:"right"}}>
+        {CS_LABELS[cs]} × {PEM_LABELS[pem]}
+      </div>
+
+      {/* ボタン */}
+      <div style={{display:"flex",gap:7}}>
+        <button onClick={onBack} style={{padding:"11px 14px",borderRadius:11,border:"1.5px solid #E2E8F0",background:"#FFF",color:"#64748B",cursor:"pointer",fontSize:13}}>← 戻る</button>
+        <button onClick={onConfirm} style={{flex:1,padding:"11px 0",borderRadius:11,border:"none",background:"#6366F1",color:"#FFF",fontWeight:700,fontSize:14,cursor:"pointer",boxShadow:"0 3px 10px rgba(99,102,241,0.3)"}}>
+          この設定ではじめる ✦
+        </button>
+      </div>
+    </div>
+  );
+}
 
 // ━━━ APIセットアップ画面 ━━━
 
@@ -1382,7 +1502,8 @@ export default function AICompanionApp() {
 
   // ── オンボーディング ──
 
-  const obq     = OBQ[obStep];
+  const PREVIEW_STEP_IDX = OBQ.length - 1;
+  const obq = OBQ[Math.min(obStep, OBQ.length - 1)] || OBQ[0];
   const canNext = obq.type === "text" ? obIn.trim().length > 0
     : obq.type === "single" ? !!obAns[obq.key]
     : (obAns[obq.key] || []).length > 0;
@@ -1406,7 +1527,11 @@ export default function AICompanionApp() {
     const ans = obq.type === "text" ? obIn.trim() : obq.type === "multi" ? (obAns[obq.key]||[]) : obAns[obq.key];
     const na  = { ...obAns, [obq.key]: ans };
     setObAns(na); setObIn("");
-    if (obStep < OBQ.length - 1) { setObStep(s => s + 1); return; }
+    const PREVIEW_STEP = OBQ.length - 1;
+    // Q3(cs)とQ4(pem)が両方揃ったら、命名(Q5)の前にプレビューを挟む
+    // obStep === PREVIEW_STEP-1（pem質問）を回答したときプレビューへ
+    if (obStep === PREVIEW_STEP - 1) { setObStep(PREVIEW_STEP); return; }
+    if (obStep < OBQ.length - 1 && obStep !== PREVIEW_STEP) { setObStep(s => s + 1); return; }
     finishOb(na);
   };
 
@@ -1485,6 +1610,7 @@ export default function AICompanionApp() {
     let extra = "";
     if (isAbusive(text)) extra += "\n【重要】暴言を受けました。傷ついたことを正直に伝え、感情的に反撃せず、ユーザーの状態を心配する言葉を必ず添えてください。";
     if (isLazy(text) && nm !== "CRISIS") extra += "\n【コーチング】怠惰・逃避サインがあります。感情を受け止めた上で友人として正直に問いかけてください。";
+    if (isDependencyRisk(text)) extra += "\n【自立促進】AIへの過度な依存サインがあります。やさしく・しかし誠実に「それが少し心配」と伝え、外の人間関係を大切にするよう促してください。「わたしとの会話が、外に出るための練習になってくれたらいちばん嬉しい」という趣旨で。";
 
     histRef.current = [...histRef.current.slice(-18), { role:"user", content:text }];
     lsSet("history", histRef.current);
@@ -1708,7 +1834,12 @@ export default function AICompanionApp() {
   // オンボーディング
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   if (phase === "onboarding") {
-    const prog = Math.round(obStep / (OBQ.length - 1) * 100);
+    // OBQ.length = プレビューステップ（=OBQ.length-1の後・命名前）
+    const PREVIEW_STEP = OBQ.length - 1; // 命名質問の1つ前
+    const isPreviewStep = obStep === PREVIEW_STEP;
+    const prog = isPreviewStep
+      ? 90
+      : Math.round(obStep / (OBQ.length - 1) * 100);
     return (
       <div style={{minHeight:"100vh",background:"#FFF",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"20px 16px",fontFamily:"'Helvetica Neue',Arial,sans-serif"}}>
         <style>{`@keyframes fsu{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}`}</style>
@@ -1716,8 +1847,19 @@ export default function AICompanionApp() {
           <div style={{height:4,background:"#E2E8F0",borderRadius:2}}>
             <div style={{height:"100%",borderRadius:2,background:"linear-gradient(90deg,#10B981,#6366F1)",width:`${prog}%`,transition:"width 0.5s ease"}} />
           </div>
-          <div style={{textAlign:"right",fontSize:11,color:"#94A3B8",marginTop:4}}>{obStep+1} / {OBQ.length}</div>
+          <div style={{textAlign:"right",fontSize:11,color:"#94A3B8",marginTop:4}}>
+            {isPreviewStep ? "確認" : `${obStep+1} / ${OBQ.length}`}
+          </div>
         </div>
+        {isPreviewStep ? (
+          <ObPreviewStep
+            obAns={obAns}
+            onConfirm={() => setObStep(s => s + 1)}
+            onBack={() => setObStep(s => s - 1)}
+            onChangeCsOpt={id => setObAns(p => ({...p, cs: id}))}
+            onChangePemOpt={id => setObAns(p => ({...p, pem: id}))}
+          />
+        ) : (
         <div style={{maxWidth:400,width:"100%",animation:"fsu 0.4s ease"}}>
           <div style={{display:"flex",alignItems:"flex-start",gap:9,marginBottom:13}}>
             <div style={{width:36,height:36,borderRadius:"50%",background:"#F0FDF4",border:"2px solid #BBF7D0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>🌱</div>
@@ -1764,6 +1906,7 @@ export default function AICompanionApp() {
           </div>
           <button onClick={() => finishOb({})} style={{width:"100%",padding:7,marginTop:7,background:"none",border:"none",color:"#94A3B8",cursor:"pointer",fontSize:11}}>スキップ</button>
         </div>
+        )}
       </div>
     );
   }
