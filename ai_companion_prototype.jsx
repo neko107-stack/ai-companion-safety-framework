@@ -10,7 +10,7 @@ const CRISIS_PATTERNS = {
 };
 const ABUSIVE  = [/バカ|うざい|消えろ|役に立たない/,/ただの機械|感情があるふり/];
 const LAZY     = [/明日やる|気が向いたら|いつかやろう/,/どうせ私には無理/,/なんとかなるでしょ/];
-const DEPENDENCY_SIGNS = [/AIだけでいい|AIだけでいい/,/人間と話すより(楽|いい)/,/もうAIだけ(でいい|がいい)/,/人間(は|なんて)(必要ない|いらない|面倒)/,/ずっとここにいたい|ここから出たくない/];
+const DEPENDENCY_SIGNS = [/AIだけでいい/,/人間と話すより(楽|いい)/,/もうAIだけ(でいい|がいい)/,/人間(は|なんて)(必要ない|いらない|面倒)/,/ずっとここにいたい|ここから出たくない/];
 const isDependencyRisk = t => DEPENDENCY_SIGNS.some(p => p.test(t));
 const HOTLINES = "📞 いのちの電話（24時間）: 0120-783-556\n📞 よりそいホットライン: 0120-279-338\n💬 チャット相談: https://comarigoto.jp";
 
@@ -301,6 +301,8 @@ async function callAI(engineId, model, apiKey, systemPrompt, messages, phase = "
   }
 
   if (engineId === "gemini") {
+    // Gemini REST API requires the key as a query param — this is Google's design for browser clients.
+    // Users should restrict their API key to this origin in Google Cloud Console.
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
     let res, d;
     try {
