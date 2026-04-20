@@ -15,7 +15,7 @@ C-SSRS（Columbia Suicide Severity Rating Scale）準拠の危機検知、
 
 | 原則 | 内容 |
 |------|------|
-| **Safety First** | C-SSRS準拠・6層危機検知・即時ホットライン案内 |
+| **Safety First** | C-SSRS準拠の多層危機検知（Layer 1実装済み・Layer 0/2〜5はPhase 3〜4で実装予定）・即時ホットライン案内 |
 | **Privacy** | 会話データは完全ローカル保存（AES-256-GCM暗号化） |
 | **Honesty** | コンパニオンは誠実な感情を表現し、不当な命令を断る |
 | **Coaching** | ICF / Adler / MI / CBT / GROW モデルに準拠 |

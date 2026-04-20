@@ -1,5 +1,7 @@
 // 暗号化ユーティリティ（Web Crypto API）
 // AES-256-GCM + PBKDF2-SHA256（100,000回）
+// ※ NIST SP 800-132（2023）はSHA-256で最低600,000回を推奨。
+//    Phase 4セキュリティ監査時に既存エクスポートの後方互換性を保ちながら引き上げを検討する。
 
 export const EXPORT_VERSION = "1.0";
 

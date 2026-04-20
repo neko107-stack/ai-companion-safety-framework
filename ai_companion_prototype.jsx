@@ -102,6 +102,9 @@ function clearLogs() {
 }
 
 // ━━━ 暗号化ユーティリティ（Web Crypto API） ━━━
+// AES-256-GCM + PBKDF2-SHA256（100,000回）
+// ※ NIST SP 800-132（2023）はSHA-256で最低600,000回を推奨。
+//    Phase 4セキュリティ監査時に引き上げを検討する（既存エクスポートの後方互換性に注意）。
 
 async function deriveKey(password, salt) {
   const enc = new TextEncoder();
@@ -192,9 +195,9 @@ const AI_ENGINES = [
     id: "claude", name: "Claude", maker: "Anthropic",
     desc: "安全性重視・日本語優秀", color: "#D4743A",
     models: [
-      {id:"claude-sonnet-4-20250514", label:"Sonnet 4.5（推奨）"},
-      {id:"claude-opus-4-6",          label:"Opus 4.6（高性能）"},
-      {id:"claude-haiku-4-5-20251001",label:"Haiku 4.5（高速・軽量）"},
+      {id:"claude-sonnet-4-6",         label:"Sonnet 4.6（推奨）"},
+      {id:"claude-opus-4-7",           label:"Opus 4.7（最高性能）"},
+      {id:"claude-haiku-4-5-20251001", label:"Haiku 4.5（高速・軽量）"},
     ],
     keyPrefix: "sk-ant-",
     keyLink: "https://console.anthropic.com",
