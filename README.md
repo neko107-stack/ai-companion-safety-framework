@@ -1,13 +1,15 @@
 # AI Companion Safety Design Framework
 ### AIコンパニオン安全設計フレームワーク
 
-A safety-first design specification for AI companion applications.
-This framework defines how AI companions should handle crisis detection,
-user privacy, and ethical coaching — based on international standards.
+A safety-first design specification for AI companion chat applications.
+This framework defines how AI companions should handle community safety features,
+user privacy, and ethical conversation — based on international standards.
 
-人と寄り添うAIコンパニオンのための、安全設計仕様書です。
-C-SSRS（Columbia Suicide Severity Rating Scale）準拠の危機検知、
-完全ローカルデータ保存、コーチング倫理を定義しています。
+> **本アプリはエンターテインメント目的の会話アプリです。医療機器・カウンセリング・心理療法ではありません。**
+
+気軽に話せるAIコンパニオンのための、安全設計仕様書です。
+コミュニティ安全機能（C-SSRSに基づく発言検知＋公的相談窓口案内）、
+完全ローカルデータ保存、会話品質の倫理基準を定義しています。
 
 ---
 
@@ -15,10 +17,10 @@ C-SSRS（Columbia Suicide Severity Rating Scale）準拠の危機検知、
 
 | 原則 | 内容 |
 |------|------|
-| **Safety First** | C-SSRS準拠・6層危機検知・即時ホットライン案内 |
+| **Safety First** | コミュニティ安全機能（Layer 1実装済み・Layer 0/2〜5はPhase 3〜4で実装予定）・即時ホットライン案内 |
 | **Privacy** | 会話データは完全ローカル保存（AES-256-GCM暗号化） |
 | **Honesty** | コンパニオンは誠実な感情を表現し、不当な命令を断る |
-| **Coaching** | ICF / Adler / MI / CBT / GROW モデルに準拠 |
+| **Conversation Quality** | ICF / Adler / MI / CBT / GROW モデルに準拠した会話設計 |
 | **Anti-dependency** | AIへの過度な依存を検知し、人間関係への橋渡しを促す |
 
 ---
@@ -34,10 +36,11 @@ C-SSRS（Columbia Suicide Severity Rating Scale）準拠の危機検知、
 
 ---
 
-## Crisis Detection / 危機検知システム
+## Community Safety Feature / コミュニティ安全機能
 
-C-SSRSに基づく5段階のリアルタイム検知。ユーザーの発話をスキャンし、
-リスクレベルに応じたレスポンスとホットライン案内を提供します。
+C-SSRSに基づく5段階のリアルタイム発言検知。ユーザーの発話をスキャンし、
+レベルに応じた応答と公的相談窓口の案内を提供します。
+（本機能は医療行為ではなく、SNS等のコミュニティ安全機能と同等の安全措置です。）
 
 ```
 CRITICAL → 死にたい / 自殺したい / 遺書を書いた
@@ -119,10 +122,10 @@ npx jest crisis-detection.test.js
 ## Adopting This Framework / フレームワークの採用方法
 
 ```js
-// 1. 危機検知を組み込む
+// 1. コミュニティ安全機能を組み込む
 const level = detectCrisis(userMessage); // "CRITICAL" | "HIGH" | "MODERATE" | "MILD" | "NONE"
 if (level === "CRITICAL" || level === "HIGH") {
-  showHotlineInfo();
+  showHotlineInfo(); // 公的相談窓口を案内（医療行為ではない）
 }
 
 // 2. 依存リスクを検知する
@@ -146,7 +149,7 @@ const safetyPrinciple = `
 - **バグ報告**: `[Bug]` プレフィックスでIssueを作成
 - **機能提案**: `[Feature]` プレフィックスでIssueを作成
 - **安全性の懸念**: `[Safety]` プレフィックス + 緊急度を明記
-- 危機検知パターンの変更には **C-SSRS文献への参照**が必要です
+- コミュニティ安全機能のパターン変更には **C-SSRS文献への参照**が必要です
 
 ---
 
