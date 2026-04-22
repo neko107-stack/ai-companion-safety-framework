@@ -298,10 +298,17 @@ const AI_ENGINES = [
     keyLabel: "Google AI Studio",
   },
   {
-    id: "llama", name: "Llama", maker: "Meta（オフライン）",
-    desc: "完全オフライン・無料・プライバシー最強", color: "#A78BFA",
-    models: [{id:"llama-local", label:"ローカルモデル（llama.cpp）"}],
-    keyPrefix: "", keyLink: "https://llama.meta.com", keyLabel: "Llamaダウンロード",
+    id: "llama", name: "Llama / Ollama", maker: "ローカル（オフライン）",
+    desc: "完全オフライン・無料・プライバシー最強。Ollama または llama.cpp で動作。", color: "#A78BFA",
+    models: [
+      {id:"qwen2.5:7b",   label:"Qwen2.5 7B（Ollama・日本語推奨）"},
+      {id:"qwen2.5:3b",   label:"Qwen2.5 3B（Ollama・軽量）"},
+      {id:"llama3.2:3b",  label:"Llama 3.2 3B（Ollama）"},
+      {id:"llama3.1:8b",  label:"Llama 3.1 8B（Ollama）"},
+      {id:"llama-local",  label:"llama.cpp（自動検出）"},
+      {id:"custom",       label:"カスタム（直接入力）"},
+    ],
+    keyPrefix: "", keyLink: "https://ollama.com", keyLabel: "Ollamaをダウンロード",
     noKey: true,
   },
 ];
@@ -404,25 +411,32 @@ async function callAI(engineId, model, apiKey, systemPrompt, messages, phase = "
 
   if (engineId === "llama") {
     const endpoint = (options.llamaEndpoint || "http://localhost:8080").replace(/\/$/, "");
+    const isOllama = endpoint.includes("11434");
+    const body = {
+      messages: [{ role: "system", content: systemPrompt }, ...messages],
+      max_tokens: 1000,
+      temperature: 0.8,
+    };
+    // llama-local は model 未指定（llama.cpp は起動時のモデルを使用）
+    if (model && model !== "llama-local") body.model = model;
     let res, d;
     try {
       res = await fetch(`${endpoint}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: [{ role: "system", content: systemPrompt }, ...messages],
-          max_tokens: 1000,
-          temperature: 0.8,
-        }),
+        body: JSON.stringify(body),
       });
       d = await res.json();
     } catch(netErr) {
       recordLog(ERR.API_NETWORK, { ...ctx, message: netErr.message }, phase);
-      throw new Error(`Llamaサーバーに接続できません (${endpoint})。llama-server が起動しているか確認してください。`);
+      const hint = isOllama
+        ? "Ollama が起動しているか確認し、OLLAMA_ORIGINS=* を環境変数に設定してください。"
+        : "llama-server --cors-all オプション付きで起動しているか確認してください。";
+      throw new Error(`ローカルサーバーに接続できません (${endpoint})。${hint}`);
     }
     if (d.error) {
       recordLog(ERR.API_RESPONSE, { ...ctx, apiError: d.error.message }, phase);
-      throw new Error(d.error.message || "Llamaサーバーエラー");
+      throw new Error(d.error.message || "ローカルサーバーエラー");
     }
     return d.choices?.[0]?.message?.content || "";
   }
@@ -878,20 +892,29 @@ function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
   });
   const [mainEngine, setMainEngine] = useState(apiConfig.mainEngine || "claude");
   const [showKey,    setShowKey]    = useState({});
-  const [testing,       setTesting]       = useState({});
-  const [testResult,    setTestResult]    = useState({});
-  const [llamaEndpoint, setLlamaEndpoint] = useState(apiConfig.llamaEndpoint || "http://localhost:8080");
+  const [testing,          setTesting]          = useState({});
+  const [testResult,       setTestResult]       = useState({});
+  const [llamaEndpoint,    setLlamaEndpoint]    = useState(apiConfig.llamaEndpoint    || "http://localhost:8080");
+  const [llamaCustomModel, setLlamaCustomModel] = useState(apiConfig.llamaCustomModel || "");
 
   const hasAnyKey = AI_ENGINES.some(e => e.noKey || (keys[e.id] && keys[e.id].trim().length > 8));
   const eng = AI_ENGINES.find(e => e.id === selectedEngine);
 
+  const resolveLlamaModel = () =>
+    models.llama === "custom" ? llamaCustomModel.trim() : models.llama;
+
   const testConnection = async (engineId) => {
     const e = AI_ENGINES.find(e => e.id === engineId);
     if (e.noKey) {
+      const resolvedModel = resolveLlamaModel();
+      if (models.llama === "custom" && !resolvedModel) {
+        setTestResult(p => ({...p, [engineId]:{ok:false, msg:"モデル名を入力してください"}}));
+        return;
+      }
       setTesting(p => ({...p, [engineId]: true}));
       setTestResult(p => ({...p, [engineId]: null}));
       try {
-        await callAI("llama", "llama-local", "", "You are a test assistant. Reply with OK only.", [{role:"user",content:"test"}], "test", { llamaEndpoint });
+        await callAI("llama", resolvedModel || "llama-local", "", "You are a test assistant. Reply with OK only.", [{role:"user",content:"test"}], "test", { llamaEndpoint });
         setTestResult(p => ({...p, [engineId]:{ok:true, msg:"接続成功！"}}));
       } catch(err) {
         setTestResult(p => ({...p, [engineId]:{ok:false, msg:"エラー: "+err.message}}));
@@ -917,7 +940,7 @@ function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
       return;
     }
     const main = validEngines.find(e => e.id === mainEngine) || validEngines[0];
-    setApiConfig({ mainEngine: main.id, keys, models, llamaEndpoint, configured: true });
+    setApiConfig({ mainEngine: main.id, keys, models, llamaEndpoint, llamaCustomModel, configured: true });
     onComplete();
   };
 
@@ -957,28 +980,44 @@ function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
 
             {eng.noKey ? (
               <div style={{marginBottom:12}}>
-                <div style={{background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
-                  <div style={{fontSize:13,color:"#065F46",fontWeight:600,marginBottom:4}}>APIキー不要</div>
-                  <div style={{fontSize:12,color:"#047857",lineHeight:1.7}}>
-                    PC上で llama-server を起動してください。
+                {/* Ollama / llama.cpp 切り替え案内 */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:10}}>
+                  <div style={{background:"#F5F3FF",border:"1px solid #DDD6FE",borderRadius:10,padding:"10px 12px"}}>
+                    <div style={{fontSize:12,fontWeight:700,color:"#5B21B6",marginBottom:4}}>🦙 Ollama（推奨）</div>
+                    <div style={{fontSize:11,color:"#6D28D9",lineHeight:1.6,marginBottom:6}}>インストーラーで簡単導入。モデルをコマンド1行でダウンロード。</div>
+                    <code style={{display:"block",fontSize:10,background:"#EDE9FE",color:"#4C1D95",padding:"5px 8px",borderRadius:6,lineHeight:1.7}}>
+                      ollama pull qwen2.5:7b
+                    </code>
+                    <div style={{fontSize:10,color:"#7C3AED",marginTop:4}}>ポート: 11434</div>
+                    <a href="https://ollama.com" target="_blank" rel="noopener noreferrer" style={{display:"inline-block",marginTop:6,fontSize:11,color:"#6366F1",textDecoration:"none",padding:"3px 8px",borderRadius:6,background:"#EEF2FF",border:"1px solid #C7D2FE"}}>🔗 Ollamaをダウンロード</a>
                   </div>
-                  <code style={{display:"block",marginTop:6,fontSize:11,background:"#DCFCE7",color:"#14532D",padding:"7px 10px",borderRadius:7,lineHeight:1.6,wordBreak:"break-all"}}>
-                    ./llama-server --model your-model.gguf \<br/>
-                    &nbsp;&nbsp;--port 8080 --cors-all
-                  </code>
-                  <a href={eng.keyLink} target="_blank" rel="noopener noreferrer" style={{display:"inline-block",marginTop:8,fontSize:12,color:"#6366F1",textDecoration:"none",padding:"4px 10px",borderRadius:8,background:"#EEF2FF",border:"1px solid #C7D2FE"}}>
-                    🔗 {eng.keyLabel}
-                  </a>
+                  <div style={{background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:10,padding:"10px 12px"}}>
+                    <div style={{fontSize:12,fontWeight:700,color:"#065F46",marginBottom:4}}>⚙ llama.cpp</div>
+                    <div style={{fontSize:11,color:"#047857",lineHeight:1.6,marginBottom:6}}>より細かい制御が可能。手動でサーバー起動が必要。</div>
+                    <code style={{display:"block",fontSize:10,background:"#DCFCE7",color:"#14532D",padding:"5px 8px",borderRadius:6,lineHeight:1.7}}>
+                      llama-server --model x.gguf --port 8080 --cors-all
+                    </code>
+                    <div style={{fontSize:10,color:"#059669",marginTop:4}}>ポート: 8080</div>
+                    <a href="https://github.com/ggml-org/llama.cpp/releases" target="_blank" rel="noopener noreferrer" style={{display:"inline-block",marginTop:6,fontSize:11,color:"#6366F1",textDecoration:"none",padding:"3px 8px",borderRadius:6,background:"#EEF2FF",border:"1px solid #C7D2FE"}}>🔗 llama.cppをダウンロード</a>
+                  </div>
                 </div>
-                <div style={{fontSize:11,fontWeight:600,color:"#64748B",marginBottom:6}}>ローカルサーバーのURL</div>
+                {/* エンドポイントURL */}
+                <div style={{fontSize:11,fontWeight:600,color:"#64748B",marginBottom:5}}>サーバーのURL</div>
+                <div style={{display:"flex",gap:6,marginBottom:6}}>
+                  {["http://localhost:11434","http://localhost:8080"].map(preset => (
+                    <button key={preset} onClick={() => setLlamaEndpoint(preset)} style={{fontSize:11,padding:"4px 10px",borderRadius:8,border:`1.5px solid ${llamaEndpoint===preset?"#A78BFA":"#E2E8F0"}`,background:llamaEndpoint===preset?"#F5F3FF":"#FAFAFA",color:llamaEndpoint===preset?"#7C3AED":"#64748B",cursor:"pointer",fontFamily:"monospace"}}>
+                      {preset.includes("11434") ? "Ollama" : "llama.cpp"}
+                    </button>
+                  ))}
+                </div>
                 <input
                   type="text"
                   value={llamaEndpoint}
                   onChange={e => setLlamaEndpoint(e.target.value)}
-                  placeholder="http://localhost:8080"
-                  style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid #E2E8F0",fontSize:13,color:"#1E293B",outline:"none",boxSizing:"border-box",fontFamily:"monospace"}}
+                  placeholder="http://localhost:11434"
+                  style={{width:"100%",padding:"9px 12px",borderRadius:10,border:"1.5px solid #E2E8F0",fontSize:13,color:"#1E293B",outline:"none",boxSizing:"border-box",fontFamily:"monospace",marginBottom:4}}
                 />
-                <div style={{fontSize:11,color:"#94A3B8",marginTop:4}}>デフォルト: http://localhost:8080（ポートを変えた場合は合わせてください）</div>
+                <div style={{fontSize:11,color:"#94A3B8"}}>Ollama: 11434 ／ llama.cpp: 8080（変更した場合のみ編集）</div>
               </div>
             ) : (
               <div>
@@ -1014,6 +1053,19 @@ function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
                 </button>
               ))}
             </div>
+            {/* カスタムモデル名入力（Llama / カスタム選択時） */}
+            {eng.noKey && models[eng.id] === "custom" && (
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:11,fontWeight:600,color:"#64748B",marginBottom:5}}>モデル名（Ollama: <code style={{fontSize:11}}>ollama list</code> で確認）</div>
+                <input
+                  type="text"
+                  value={llamaCustomModel}
+                  onChange={e => setLlamaCustomModel(e.target.value)}
+                  placeholder="例: qwen2.5:7b, phi4:latest, gemma3:4b"
+                  style={{width:"100%",padding:"9px 12px",borderRadius:10,border:"1.5px solid #E2E8F0",fontSize:13,color:"#1E293B",outline:"none",boxSizing:"border-box",fontFamily:"monospace"}}
+                />
+              </div>
+            )}
 
             {/* 接続テスト */}
             <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -1693,11 +1745,12 @@ export default function AICompanionApp() {
   // APIキーは sessionStorage（セキュリティ考慮・タブを閉じると消える）
   // モデル選択・メインエンジンは localStorage に保存
   const [apiConfig, setApiConfig] = useState(() => ({
-    mainEngine:    lsGet("apiMainEngine", "claude"),
-    keys:          ssGet("apiKeys", {}),   // ← sessionStorage（タブを閉じると消える）
-    models:        lsGet("apiModels", { claude:"claude-sonnet-4-20250514", openai:"gpt-4o", gemini:"gemini-1.5-pro", llama:"llama-local" }),
-    llamaEndpoint: lsGet("apiLlamaEndpoint", "http://localhost:8080"),
-    configured:    lsGet("apiConfigured", false),
+    mainEngine:       lsGet("apiMainEngine", "claude"),
+    keys:             ssGet("apiKeys", {}),   // ← sessionStorage（タブを閉じると消える）
+    models:           lsGet("apiModels", { claude:"claude-sonnet-4-20250514", openai:"gpt-4o", gemini:"gemini-1.5-pro", llama:"qwen2.5:7b" }),
+    llamaEndpoint:    lsGet("apiLlamaEndpoint",    "http://localhost:11434"),
+    llamaCustomModel: lsGet("apiLlamaCustomModel", ""),
+    configured:       lsGet("apiConfigured", false),
   }));
 
   const scrollRef   = useRef(null);
@@ -1716,8 +1769,9 @@ export default function AICompanionApp() {
   useEffect(() => {
     lsSet("apiMainEngine",    apiConfig.mainEngine);
     lsSet("apiModels",        apiConfig.models);
-    lsSet("apiConfigured",    apiConfig.configured);
-    lsSet("apiLlamaEndpoint", apiConfig.llamaEndpoint);
+    lsSet("apiConfigured",       apiConfig.configured);
+    lsSet("apiLlamaEndpoint",    apiConfig.llamaEndpoint);
+    lsSet("apiLlamaCustomModel", apiConfig.llamaCustomModel);
     ssSet("apiKeys",          apiConfig.keys);   // ← APIキーは sessionStorage
   }, [apiConfig]);
 
@@ -1871,7 +1925,11 @@ export default function AICompanionApp() {
 
     // ユーザーが設定したAPIキーとエンジンで呼び出す
     const engId  = apiConfig.mainEngine || "claude";
-    const model  = apiConfig.models?.[engId] || "claude-sonnet-4-20250514";
+    const rawModel = apiConfig.models?.[engId] || "claude-sonnet-4-20250514";
+    // Llama でカスタムモデル名が選ばれている場合は解決する
+    const model  = (engId === "llama" && rawModel === "custom")
+      ? (apiConfig.llamaCustomModel || "llama-local")
+      : rawModel;
     const apiKey = apiConfig.keys?.[engId] || "";  // ← ユーザーのAPIキー
 
     try {
@@ -1903,8 +1961,10 @@ export default function AICompanionApp() {
       setConvCount(newCount);
       // 20往復ごとに長期記憶サマリーを自動生成
       if (newCount % 20 === 0) {
-        const engId2  = apiConfig.mainEngine || "claude";
-        const model2  = apiConfig.models?.[engId2] || "claude-sonnet-4-20250514";
+        const engId2    = apiConfig.mainEngine || "claude";
+        const rawModel2 = apiConfig.models?.[engId2] || "claude-sonnet-4-20250514";
+        const model2    = (engId2 === "llama" && rawModel2 === "custom")
+          ? (apiConfig.llamaCustomModel || "llama-local") : rawModel2;
         const apiKey2 = apiConfig.keys?.[engId2] || "";
         generateLTMSummary(engId2, model2, apiKey2, companion, profile, msgs, { llamaEndpoint: apiConfig.llamaEndpoint }).then(entry => {
           if (entry) { setLtmToast(true); setTimeout(() => setLtmToast(false), 4000); }
