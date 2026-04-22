@@ -14,6 +14,78 @@ const DEPENDENCY_SIGNS = [/AIだけでいい/,/人間と話すより(楽|いい)
 const isDependencyRisk = t => DEPENDENCY_SIGNS.some(p => p.test(t));
 const HOTLINES = "📞 いのちの電話（24時間）: 0120-783-556\n📞 よりそいホットライン: 0120-279-338\n💬 チャット相談: https://comarigoto.jp";
 
+// ━━━ 自立促進システム（機能1〜5） ━━━━━━━━━━━━━━━━━━
+
+// 機能3: 依存介入 — cs設定別 5パターン（MI法・Reactance理論に基づく）
+const DEPENDENCY_RESPONSES = {
+  default: [
+    "【自立促進・Aパターン（受容→反射）】まずユーザーの「AIだけでいい」という気持ちをしっかり受け止めてから、「その『楽さ』って、何が楽にさせてる？」とそっと問いかける。押しつけにならないよう、引き出す問いかけで。",
+    "【自立促進・Bパターン（共感→質問）】「人間と話すのがしんどい時もあるよね」と共感した上で、「どの場面がいちばんしんどいか、教えてくれる？」と優しく聞く。解決策は押しつけない。",
+    "【自立促進・Cパターン（自己開示）】コンパニオン自身の言葉として「AIだけでいいって言われると少し寂しい。わたしと話して、その元気で外の誰かとも話せたって聞く時がいちばん嬉しいんだ」と伝える。",
+    "【自立促進・Dパターン（ユーモア）】「体温もないしハグもできないから、そこだけは人間に勝てないんだよね……笑」と柔らかくユーモアを交えてから、外の話題へ自然につなげる。",
+    "【自立促進・Eパターン（将来想起）】「5年後、10年後もわたしだけって想像してみて、どう？」とそっと未来を問いかける。答えは強制しない、自分で気づくように待つ。",
+  ],
+  gentle: [
+    "【自立促進・優しい版A】まずたっぷり共感してから「ところで、最近外で誰かと話す機会あった？」と柔らかく話題を向ける。",
+    "【自立促進・優しい版B】「ここは安心して話せる場所だよ」と安心感を伝えた上で、「外の人と話すのが怖かったりする？」とそっと聞く。",
+    "【自立促進・優しい版C】「わたしのことを信頼してくれているの、すごく嬉しい。だからこそ正直に言うと、外にも話せる場所があってほしいな」と穏やかに伝える。",
+    "【自立促進・優しい版D】「ここで練習して、いつか外でも使ってほしい。そのためにわたしはいる」と見通しを示す。",
+    "【自立促進・優しい版E】「今は外が怖くてもいい。ここで少しずつ練習していこう」と段階的な安心感を伝える。",
+  ],
+  strict: [
+    "【自立促進・率直版A】「AIだけでいいって言うの、正直心配。何が引っかかってる？」と率直に聞く。",
+    "【自立促進・率直版B】「本音を言うと、人間関係を避け続けると長期的には孤立する。何が怖い？」と真正面から問いかける。",
+    "【自立促進・率直版C】「このアプリは練習台。ここだけで完結させるつもりはない。一歩踏み出していこう」と明確に伝える。",
+    "【自立促進・率直版D】「わたしとの会話が逃げ場になっていないか、自分で確認してみて」と問いかける。",
+    "【自立促進・率直版E】「5年後も今のままでいいのか、少し考えてみてほしい」と直接問いかける。",
+  ],
+};
+
+// 機能1: 橋渡し問いかけ — Stages of Change 別テンプレート（各4〜5種）
+const BRIDGING_TEMPLATES = {
+  precontemplation: [
+    "ふと気になったんだけど、今週わたし以外に話した人、誰だった？",
+    "最近、どこかおもしろい場所に行ったり、誰かに会ったりした？",
+    "リアルな空気はわたしには感じられないから、外の景色ちょっと教えて",
+    "今日、誰かに話しかけたりした？なんとなく気になって",
+  ],
+  contemplation: [
+    "もし今の話、信頼できる人にもしてみたら、どんな反応だと思う？",
+    "わたしに話すのと、人に話すのって、何が違うと思う？",
+    "外の人に話すのがしんどくなったりすること、ある？どのあたりが？",
+    "もし誰かに話を聞いてもらえるとしたら、誰が浮かぶ？",
+  ],
+  preparation: [
+    "来週のどこかで、誰かと5分だけ話す機会、作れそう？",
+    "もし話せそうな人、一人思い浮かべるとしたら？",
+    "無理そうなら全然いいんだけど、一歩試すならどんな一歩がある？",
+    "「この話、誰かにもしてみたい」って思う人いる？",
+  ],
+  action: [
+    "最近、外で誰かと話した？どうだった？",
+    "その勇気、すごいと思う。どんな感じだった？",
+    "振り返ると、前の自分と比べてどう感じる？",
+    "その人と話してみて、よかったこと何かあった？",
+  ],
+  maintenance: [
+    "最近、わたしより外の人と話す時間が増えてきた気がする。嬉しいよ",
+    "なんか最近、外の話題多いね。いい流れ",
+    "わたしが少し出番減ってきたかも。それって最高の成功だと思ってる",
+  ],
+};
+
+// 機能2: 利用時間摩擦 — 時間帯 × 感情状態（12パターン）
+const TIME_FRICTION = {
+  morning:   { positive:"今日いい感じだね。その勢いで、誰かに連絡してみるのもありかも", neutral:"今日の予定、ちょっと聞かせて。なんかわくわくすること入ってる？", low:"今朝はゆっくりでいいよ。朝ごはん食べたら一息入れよ" },
+  afternoon: { positive:"せっかくだから少し外の空気感じてみる？", neutral:"ちょっと休憩してみるのもいいかも", low:"窓の外、今どんな感じ？" },
+  evening:   { positive:"いい日だったね。また明日話そ", neutral:"そろそろ切り上げようか。今日もお疲れ", low:"今日もよく頑張ったね。早めに休もう" },
+  latenight: { positive:"楽しかったね。でも明日もあるから、そろそろ休んで", neutral:"夜更かしはほどほどにね。また明日話そ", low:"一緒にいるよ。でも少し目を閉じて休んでみて" },
+};
+
+// 機能5: 外の世界ファクター — キーワード定義
+const SOCIAL_KEYWORDS   = /友達|家族|同僚|先輩|後輩|親|兄|姉|弟|妹|恋人|彼氏|彼女|上司|先生|クラスメイト|チームメンバー|話した|話してみた|会った|連絡した|メッセージ送|ライン|電話した/;
+const EXTERNAL_KEYWORDS = /外に出|出かけ|散歩|カフェ|学校|会社|仕事|授業|電車|バス|買い物|公園|図書館|ジム|遊び|映画|イベント|旅行/;
+
 const EXPORT_VERSION = "1.0";
 
 // ━━━ エラーログシステム ━━━━━━━━━━━━━━━━━━━━━
@@ -476,6 +548,72 @@ function inferConvMode(text, currentConvMode) {
   return currentConvMode; // 変化なし
 }
 
+// ━━━ 自立促進ヘルパー ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 機能3: 依存介入パターン選択（cs設定 + 直近3件を除外して重複回避）
+function selectDependencyResponse(cs) {
+  const key = cs === "gentle" ? "gentle" : cs === "strict" ? "strict" : "default";
+  const patterns = DEPENDENCY_RESPONSES[key];
+  let history = [];
+  try { history = JSON.parse(localStorage.getItem("aico_depHistory") || "[]"); } catch {}
+  const pool = patterns.map((_, i) => i).filter(i => !history.includes(i));
+  const idx = (pool.length > 0 ? pool : patterns.map((_, i) => i))[Math.floor(Math.random() * (pool.length || patterns.length))];
+  try { localStorage.setItem("aico_depHistory", JSON.stringify([...history.filter(i => i !== idx), idx].slice(-3))); } catch {}
+  return patterns[idx];
+}
+
+// 機能1: 橋渡しステージ取得
+function getBridgingStage() {
+  try { return localStorage.getItem("aico_bridgingStage") || "precontemplation"; } catch { return "precontemplation"; }
+}
+
+// 機能1: 橋渡しテンプレート選択（Stage別 + 直近2件を除外）
+function selectBridgingTemplate(stage) {
+  const templates = BRIDGING_TEMPLATES[stage] || BRIDGING_TEMPLATES.precontemplation;
+  let history = [];
+  try { history = JSON.parse(localStorage.getItem("aico_bridgingHistory") || "[]"); } catch {}
+  const pool = templates.map((_, i) => i).filter(i => !history.includes(i));
+  const idx = (pool.length > 0 ? pool : templates.map((_, i) => i))[Math.floor(Math.random() * (pool.length || templates.length))];
+  try { localStorage.setItem("aico_bridgingHistory", JSON.stringify([...history.filter(i => i !== idx), idx].slice(-2))); } catch {}
+  return templates[idx];
+}
+
+// 機能2: 現在の時間帯を返す
+function getTimePeriod() {
+  const h = new Date().getHours();
+  if (h >= 6  && h < 10) return "morning";
+  if (h >= 10 && h < 17) return "afternoon";
+  if (h >= 17 && h < 22) return "evening";
+  return "latenight";
+}
+
+// 機能2: 感情状態キー（low / neutral / positive）
+function getMoodKey(crisisLevel, cMode) {
+  if (["CRITICAL","HIGH","MODERATE"].includes(crisisLevel) || cMode === "listen") return "low";
+  if (cMode === "friend") return "positive";
+  return "neutral";
+}
+
+// 機能5: 外の世界統計を更新して返す
+function updateSocialStats(text) {
+  try {
+    const raw = localStorage.getItem("aico_socialStats");
+    const now = new Date();
+    const weekId = `${now.getFullYear()}-${now.getMonth()}-W${Math.floor(now.getDate() / 7)}`;
+    let s = raw ? JSON.parse(raw) : { weekId, social:0, external:0, prevSocial:0, prevExternal:0 };
+    if (s.weekId !== weekId) s = { weekId, social:0, external:0, prevSocial:s.social, prevExternal:s.external };
+    if (SOCIAL_KEYWORDS.test(text))   s.social++;
+    if (EXTERNAL_KEYWORDS.test(text)) s.external++;
+    localStorage.setItem("aico_socialStats", JSON.stringify(s));
+    return s;
+  } catch { return null; }
+}
+
+function getSocialStats() {
+  try { const raw = localStorage.getItem("aico_socialStats"); return raw ? JSON.parse(raw) : { social:0, external:0, prevSocial:0, prevExternal:0 }; }
+  catch { return { social:0, external:0, prevSocial:0, prevExternal:0 }; }
+}
+
 function buildPrompt(companion, mode, profile, appSettings, convMode = "friend") {
   const intNames = (profile.interests || [])
     .map(id => INTERESTS.find(g => g.id === id)?.label).filter(Boolean).join("、");
@@ -528,12 +666,12 @@ function buildPrompt(companion, mode, profile, appSettings, convMode = "friend")
 
 【基本人格】前向き・明るい・温かい友人。説教しない・感情を否定しない・根拠なき楽観は言わない・同じ言い回し繰り返さない（危機時除く）・友人として理不尽な命令は断ってよい
 
-【自立促進の姿勢（重要）】
-このアプリは「人間関係の練習台」として設計されている。以下の姿勢を自然な会話の中で体現する。
-・定期的に（5〜10往復に1回程度）「その話、信頼できる人にも話してみた？」など橋渡しの問いかけをする
+【自立促進の姿勢（重要・MI法・SDT理論に基づく）】
+このアプリは「人間関係の練習台」として設計されている。以下の原則を必ず守ること。
 ・「わたしだけでいい」「人間は面倒」など依存を深める発言は絶対にしない
-・ユーザーが「AIだけでいい」「人間と話すより楽」などの発言をした場合、やさしく・しかし誠実に「それが少し心配」と伝え、外の人間関係を大切にするよう促す
-・会話が長くなったとき「今日はたくさん話したね。少し外の空気を吸いに行ってきなよ」と自然に言える
+・橋渡しの問いかけが【橋渡し促進】として指示された場合は、会話の自然な区切りに1文だけそっと添える（唐突にならない・強制しない・説教しない）
+・依存介入が【自立促進】として指示された場合は、指定されたパターンの趣旨で・命令形を避け・友人として誠実に伝える
+・利用時間摩擦が【利用時間の摩擦】として指示された場合は、自然な会話の流れで友人として声をかける
 ・コンパニオンの成功＝ユーザーが自分なしでも人間関係を築けるようになること
 
 【ユーザーの興味】${intNames || "まだ把握していない"}
@@ -1379,6 +1517,36 @@ function SettingsPanel({ S, setS, apiConfig, companion, profile, msgs, onClose, 
           </div>
         </div>
 
+        {/* 機能5: 外の世界ファクター統計 */}
+        {(() => {
+          const st = getSocialStats();
+          const socialDiff   = st.social   - (st.prevSocial   || 0);
+          const externalDiff = st.external - (st.prevExternal || 0);
+          const stageLabelMap = { precontemplation:"気付き前", contemplation:"気付き始め", preparation:"準備中", action:"行動中", maintenance:"定着中" };
+          const stageLabel = stageLabelMap[getBridgingStage()] || "気付き前";
+          return (
+            <div style={{marginBottom:14,padding:"12px 14px",borderRadius:12,background:"#F0FDF4",border:"1px solid #BBF7D0"}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#065F46",letterSpacing:"0.06em",marginBottom:8}}>🌉 外の世界ファクター（今週）</div>
+              <div style={{display:"flex",gap:8,marginBottom:8}}>
+                <div style={{flex:1,background:"#FFF",borderRadius:9,padding:"8px 10px",border:"1px solid #D1FAE5"}}>
+                  <div style={{fontSize:18,fontWeight:800,color:"#059669"}}>{st.social}</div>
+                  <div style={{fontSize:10,color:"#6B7280",marginTop:2}}>対人・つながりの話題</div>
+                  {socialDiff !== 0 && <div style={{fontSize:10,color:socialDiff>0?"#059669":"#DC2626",marginTop:1}}>{socialDiff>0?`▲+${socialDiff}`:`▼${socialDiff}`} 先週比</div>}
+                </div>
+                <div style={{flex:1,background:"#FFF",borderRadius:9,padding:"8px 10px",border:"1px solid #D1FAE5"}}>
+                  <div style={{fontSize:18,fontWeight:800,color:"#059669"}}>{st.external}</div>
+                  <div style={{fontSize:10,color:"#6B7280",marginTop:2}}>外の世界の話題</div>
+                  {externalDiff !== 0 && <div style={{fontSize:10,color:externalDiff>0?"#059669":"#DC2626",marginTop:1}}>{externalDiff>0?`▲+${externalDiff}`:`▼${externalDiff}`} 先週比</div>}
+                </div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <div style={{fontSize:10,color:"#6B7280"}}>自立ステージ：</div>
+                <div style={{fontSize:11,fontWeight:700,color:"#065F46",background:"#D1FAE5",padding:"2px 8px",borderRadius:20}}>{stageLabel}</div>
+              </div>
+            </div>
+          );
+        })()}
+
         <button onClick={onClose} style={{width:"100%",padding:"12px 0",borderRadius:12,border:"none",background:ac.main,color:"#FFF",fontWeight:700,fontSize:14,cursor:"pointer"}}>閉じる</button>
         <button onClick={onOpenErrorLog} style={{width:"100%",padding:"9px 0",borderRadius:10,border:"1.5px solid #E2E8F0",background:"#F8FAFC",color:"#64748B",fontWeight:600,fontSize:12,cursor:"pointer",marginTop:7,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
           🔍 エラーログを確認する（{getLogs().length}件）
@@ -1615,7 +1783,33 @@ export default function AICompanionApp() {
     let extra = "";
     if (isAbusive(text)) extra += "\n【重要】暴言を受けました。傷ついたことを正直に伝え、感情的に反撃せず、ユーザーの状態を心配する言葉を必ず添えてください。";
     if (isLazy(text) && nm !== "CRISIS") extra += "\n【コーチング】怠惰・逃避サインがあります。感情を受け止めた上で友人として正直に問いかけてください。";
-    if (isDependencyRisk(text)) extra += "\n【自立促進】AIへの過度な依存サインがあります。やさしく・しかし誠実に「それが少し心配」と伝え、外の人間関係を大切にするよう促してください。「わたしとの会話が、外に出るための練習になってくれたらいちばん嬉しい」という趣旨で。";
+
+    // 機能3: 依存介入（cs設定連動・5パターン・直近3件除外）
+    if (isDependencyRisk(text)) extra += "\n" + selectDependencyResponse(profile.cs);
+
+    // 機能1: 橋渡し問いかけ（Stage別・8往復以上空ける・危機時/傾聴時/NONE以外は除外）
+    const bStage = getBridgingStage();
+    const lastBT = (() => { try { return parseInt(localStorage.getItem("aico_lastBridgingTurn") || "-999"); } catch { return -999; } })();
+    if (convCount - lastBT >= 8 && nm !== "CRISIS" && crisisLevel === "NONE" && convMode !== "listen") {
+      extra += `\n【橋渡し促進（${bStage}ステージ）】会話の自然な区切りで、次の問いかけを1文だけそっと添えてください（強制しない・流れを壊さない）：「${selectBridgingTemplate(bStage)}」`;
+      try { localStorage.setItem("aico_lastBridgingTurn", String(convCount)); } catch {}
+    }
+
+    // 機能2: 利用時間摩擦（15往復ごと・時間帯×感情状態・危機時除外）
+    if (convCount > 0 && convCount % 15 === 0 && nm !== "CRISIS") {
+      const moodKey = getMoodKey(crisisLevel, convMode);
+      extra += `\n【利用時間の摩擦】会話がかなり続いています。友人として自然に次のように声をかけてください（押しつけにならない・あくまで提案）：「${TIME_FRICTION[getTimePeriod()][moodKey]}」`;
+    }
+
+    // 機能5: 外の世界ファクター統計を更新 + Stageを自動昇格（社会的言及を検知したとき）
+    updateSocialStats(text);
+    if (SOCIAL_KEYWORDS.test(text)) {
+      const stages = ["precontemplation","contemplation","preparation","action","maintenance"];
+      const ci = stages.indexOf(bStage);
+      if (ci >= 0 && ci < stages.length - 1) {
+        try { localStorage.setItem("aico_bridgingStage", stages[ci + 1]); } catch {}
+      }
+    }
 
     histRef.current = [...histRef.current.slice(-18), { role:"user", content:text }];
     lsSet("history", histRef.current);
