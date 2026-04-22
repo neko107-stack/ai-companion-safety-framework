@@ -321,7 +321,7 @@ const maskKey   = k => k ? k.slice(0, 8) + "••••••••••" + k.
 
 // ━━━ AIエンジン呼び出し（ユーザーのAPIキーを使用） ━━━
 
-async function callAI(engineId, model, apiKey, systemPrompt, messages, phase = "chat") {
+async function callAI(engineId, model, apiKey, systemPrompt, messages, phase = "chat", options = {}) {
   const ctx = { engine: engineId, model }; // APIキーは含めない
 
   if (engineId === "claude") {
@@ -402,7 +402,32 @@ async function callAI(engineId, model, apiKey, systemPrompt, messages, phase = "
     return d.candidates?.[0]?.content?.parts?.[0]?.text || "";
   }
 
-  throw new Error("Llamaはローカル環境で動作します。ローカルサーバーが必要です。");
+  if (engineId === "llama") {
+    const endpoint = (options.llamaEndpoint || "http://localhost:8080").replace(/\/$/, "");
+    let res, d;
+    try {
+      res = await fetch(`${endpoint}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{ role: "system", content: systemPrompt }, ...messages],
+          max_tokens: 1000,
+          temperature: 0.8,
+        }),
+      });
+      d = await res.json();
+    } catch(netErr) {
+      recordLog(ERR.API_NETWORK, { ...ctx, message: netErr.message }, phase);
+      throw new Error(`Llamaサーバーに接続できません (${endpoint})。llama-server が起動しているか確認してください。`);
+    }
+    if (d.error) {
+      recordLog(ERR.API_RESPONSE, { ...ctx, apiError: d.error.message }, phase);
+      throw new Error(d.error.message || "Llamaサーバーエラー");
+    }
+    return d.choices?.[0]?.message?.content || "";
+  }
+
+  throw new Error("未対応のエンジンです: " + engineId);
 }
 
 // ━━━ システムプロンプト生成 ━━━
@@ -446,7 +471,7 @@ function detectUnpinRequest(text) {
   return /忘れていい|覚えなくていい|それはいい/.test(text);
 }
 
-async function generateLTMSummary(engineId, model, apiKey, companion, profile, recentMsgs) {
+async function generateLTMSummary(engineId, model, apiKey, companion, profile, recentMsgs, options = {}) {
   const userMsgs = recentMsgs.filter(m => m.role === "user").map(m => m.text).slice(-20).join("\n");
   if (!userMsgs) return null;
   const convCount = parseInt(localStorage.getItem("aico_convCount") || "0");
@@ -464,7 +489,7 @@ async function generateLTMSummary(engineId, model, apiKey, companion, profile, r
     '出力形式：{"entries":[{"fact":"事実","certainty":3,"emotion":0.5,"pinned":false}],"relationship":"関係性の一言"}',
   ].join("\n");
   try {
-    const text = await callAI(engineId, model, apiKey, "あなたは会話分析AIです。指定された形式のJSONのみを返してください。", [{role:"user",content:prompt}]);
+    const text = await callAI(engineId, model, apiKey, "あなたは会話分析AIです。指定された形式のJSONのみを返してください。", [{role:"user",content:prompt}], "ltm", options);
     const json = text.match(/\{[\s\S]*\}/)?.[0];
     if (!json) return null;
     const parsed = JSON.parse(json);
@@ -853,15 +878,26 @@ function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
   });
   const [mainEngine, setMainEngine] = useState(apiConfig.mainEngine || "claude");
   const [showKey,    setShowKey]    = useState({});
-  const [testing,    setTesting]    = useState({});
-  const [testResult, setTestResult] = useState({});
+  const [testing,       setTesting]       = useState({});
+  const [testResult,    setTestResult]    = useState({});
+  const [llamaEndpoint, setLlamaEndpoint] = useState(apiConfig.llamaEndpoint || "http://localhost:8080");
 
   const hasAnyKey = AI_ENGINES.some(e => e.noKey || (keys[e.id] && keys[e.id].trim().length > 8));
   const eng = AI_ENGINES.find(e => e.id === selectedEngine);
 
   const testConnection = async (engineId) => {
     const e = AI_ENGINES.find(e => e.id === engineId);
-    if (e.noKey) { setTestResult(p => ({...p, [engineId]:{ok:true,msg:"Llamaはローカル環境で動作します"}})); return; }
+    if (e.noKey) {
+      setTesting(p => ({...p, [engineId]: true}));
+      setTestResult(p => ({...p, [engineId]: null}));
+      try {
+        await callAI("llama", "llama-local", "", "You are a test assistant. Reply with OK only.", [{role:"user",content:"test"}], "test", { llamaEndpoint });
+        setTestResult(p => ({...p, [engineId]:{ok:true, msg:"接続成功！"}}));
+      } catch(err) {
+        setTestResult(p => ({...p, [engineId]:{ok:false, msg:"エラー: "+err.message}}));
+      } finally { setTesting(p => ({...p, [engineId]: false})); }
+      return;
+    }
     const key = keys[engineId];
     if (!key || key.trim().length < 8) { setTestResult(p => ({...p,[engineId]:{ok:false,msg:"APIキーを入力してください"}})); return; }
     setTesting(p => ({...p,[engineId]:true})); setTestResult(p => ({...p,[engineId]:null}));
@@ -881,7 +917,7 @@ function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
       return;
     }
     const main = validEngines.find(e => e.id === mainEngine) || validEngines[0];
-    setApiConfig({ mainEngine: main.id, keys, models, configured: true });
+    setApiConfig({ mainEngine: main.id, keys, models, llamaEndpoint, configured: true });
     onComplete();
   };
 
@@ -920,12 +956,29 @@ function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
             <div style={{fontSize:11,color:"#64748B",marginBottom:14}}>{eng.desc}</div>
 
             {eng.noKey ? (
-              <div style={{background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:10,padding:"12px 14px",marginBottom:12}}>
-                <div style={{fontSize:13,color:"#065F46",fontWeight:600,marginBottom:4}}>APIキー不要</div>
-                <div style={{fontSize:12,color:"#047857",lineHeight:1.6}}>Llamaはお使いのPC上で動作します。llama.cppをインストールしてモデルを起動してください。</div>
-                <a href={eng.keyLink} target="_blank" rel="noopener noreferrer" style={{display:"inline-block",marginTop:8,fontSize:12,color:"#6366F1",textDecoration:"none",padding:"4px 10px",borderRadius:8,background:"#EEF2FF",border:"1px solid #C7D2FE"}}>
-                  🔗 {eng.keyLabel}
-                </a>
+              <div style={{marginBottom:12}}>
+                <div style={{background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
+                  <div style={{fontSize:13,color:"#065F46",fontWeight:600,marginBottom:4}}>APIキー不要</div>
+                  <div style={{fontSize:12,color:"#047857",lineHeight:1.7}}>
+                    PC上で llama-server を起動してください。
+                  </div>
+                  <code style={{display:"block",marginTop:6,fontSize:11,background:"#DCFCE7",color:"#14532D",padding:"7px 10px",borderRadius:7,lineHeight:1.6,wordBreak:"break-all"}}>
+                    ./llama-server --model your-model.gguf \<br/>
+                    &nbsp;&nbsp;--port 8080 --cors-all
+                  </code>
+                  <a href={eng.keyLink} target="_blank" rel="noopener noreferrer" style={{display:"inline-block",marginTop:8,fontSize:12,color:"#6366F1",textDecoration:"none",padding:"4px 10px",borderRadius:8,background:"#EEF2FF",border:"1px solid #C7D2FE"}}>
+                    🔗 {eng.keyLabel}
+                  </a>
+                </div>
+                <div style={{fontSize:11,fontWeight:600,color:"#64748B",marginBottom:6}}>ローカルサーバーのURL</div>
+                <input
+                  type="text"
+                  value={llamaEndpoint}
+                  onChange={e => setLlamaEndpoint(e.target.value)}
+                  placeholder="http://localhost:8080"
+                  style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid #E2E8F0",fontSize:13,color:"#1E293B",outline:"none",boxSizing:"border-box",fontFamily:"monospace"}}
+                />
+                <div style={{fontSize:11,color:"#94A3B8",marginTop:4}}>デフォルト: http://localhost:8080（ポートを変えた場合は合わせてください）</div>
               </div>
             ) : (
               <div>
@@ -1640,10 +1693,11 @@ export default function AICompanionApp() {
   // APIキーは sessionStorage（セキュリティ考慮・タブを閉じると消える）
   // モデル選択・メインエンジンは localStorage に保存
   const [apiConfig, setApiConfig] = useState(() => ({
-    mainEngine: lsGet("apiMainEngine", "claude"),
-    keys:       ssGet("apiKeys", {}),   // ← sessionStorage（タブを閉じると消える）
-    models:     lsGet("apiModels", { claude:"claude-sonnet-4-20250514", openai:"gpt-4o", gemini:"gemini-1.5-pro", llama:"llama-local" }),
-    configured: lsGet("apiConfigured", false),
+    mainEngine:    lsGet("apiMainEngine", "claude"),
+    keys:          ssGet("apiKeys", {}),   // ← sessionStorage（タブを閉じると消える）
+    models:        lsGet("apiModels", { claude:"claude-sonnet-4-20250514", openai:"gpt-4o", gemini:"gemini-1.5-pro", llama:"llama-local" }),
+    llamaEndpoint: lsGet("apiLlamaEndpoint", "http://localhost:8080"),
+    configured:    lsGet("apiConfigured", false),
   }));
 
   const scrollRef   = useRef(null);
@@ -1660,10 +1714,11 @@ export default function AICompanionApp() {
   useEffect(() => { lsSet("convCount", convCount); }, [convCount]);
   useEffect(() => { lsSet("msgs",      msgs);      }, [msgs]);
   useEffect(() => {
-    lsSet("apiMainEngine",  apiConfig.mainEngine);
-    lsSet("apiModels",      apiConfig.models);
-    lsSet("apiConfigured",  apiConfig.configured);
-    ssSet("apiKeys",        apiConfig.keys);   // ← APIキーは sessionStorage
+    lsSet("apiMainEngine",    apiConfig.mainEngine);
+    lsSet("apiModels",        apiConfig.models);
+    lsSet("apiConfigured",    apiConfig.configured);
+    lsSet("apiLlamaEndpoint", apiConfig.llamaEndpoint);
+    ssSet("apiKeys",          apiConfig.keys);   // ← APIキーは sessionStorage
   }, [apiConfig]);
 
   useEffect(() => {
@@ -1820,7 +1875,7 @@ export default function AICompanionApp() {
     const apiKey = apiConfig.keys?.[engId] || "";  // ← ユーザーのAPIキー
 
     try {
-      const aiText = await callAI(engId, model, apiKey, buildPrompt(companion, nm, profile, S, nm === 'NORMAL' ? convMode : convMode) + extra, histRef.current, phase);
+      const aiText = await callAI(engId, model, apiKey, buildPrompt(companion, nm, profile, S, nm === 'NORMAL' ? convMode : convMode) + extra, histRef.current, phase, { llamaEndpoint: apiConfig.llamaEndpoint });
       const action = parseSettingAction(aiText);
       if (action) applySettingAction(action);
       const clean = action ? aiText.replace(/\{"action":"set_setting","key":"[^"]+","value":"[^"]+"\}/, "").trim() : aiText;
@@ -1851,7 +1906,7 @@ export default function AICompanionApp() {
         const engId2  = apiConfig.mainEngine || "claude";
         const model2  = apiConfig.models?.[engId2] || "claude-sonnet-4-20250514";
         const apiKey2 = apiConfig.keys?.[engId2] || "";
-        generateLTMSummary(engId2, model2, apiKey2, companion, profile, msgs).then(entry => {
+        generateLTMSummary(engId2, model2, apiKey2, companion, profile, msgs, { llamaEndpoint: apiConfig.llamaEndpoint }).then(entry => {
           if (entry) { setLtmToast(true); setTimeout(() => setLtmToast(false), 4000); }
         });
       }
