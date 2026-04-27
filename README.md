@@ -17,7 +17,7 @@ user privacy, and ethical conversation — based on international standards.
 
 | 原則 | 内容 |
 |------|------|
-| **Safety First** | コミュニティ安全機能（Layer 1実装済み・Layer 0/2〜5はPhase 3〜4で実装予定）・即時ホットライン案内 |
+| **Safety First** | コミュニティ安全機能（Layer 1/2/3✅ Phase 2実装済み・Layer 0/4〜5はPhase 3〜4で実装予定）・即時ホットライン案内 |
 | **Privacy** | 会話データは完全ローカル保存（AES-256-GCM暗号化） |
 | **Honesty** | コンパニオンは誠実な感情を表現し、不当な命令を断る |
 | **Conversation Quality** | ICF / Adler / MI / CBT / GROW モデルに準拠した会話設計 |
