@@ -25,7 +25,7 @@
 
 | 問題 | 解決策 |
 |------|--------|
-| 自殺・自傷に関連する発言への対応 | コミュニティ安全機能（公的相談窓口の案内）（Layer 1実装済み・Layer 0/2〜5はPhase 3〜4で実装予定） |
+| 自殺・自傷に関連する発言への対応 | コミュニティ安全機能（公的相談窓口の案内）（Layer 1✅・Layer 2/3✅ Phase 2実装済み・Layer 0/4〜5はPhase 3〜4で実装予定） |
 | プライバシー漏洩 | 完全ローカル保存 + AES-256-GCM暗号化 |
 | AIへの過度な依存 | 段階的介入システム（5フェーズ）+ 依存リスク検知 |
 | 人間関係への橋渡しが早すぎる | 作業同盟・変化ステージ・行動活性化理論に基づく段階的誘導 |
@@ -95,22 +95,38 @@ const CRISIS_PATTERNS = {
 };
 ```
 
-### Layer 2: Cognitive Pattern Analysis（認知パターン分析 / CBT）`[Phase 2で実装予定]`
-- 認知の歪み（全か無か思考・破滅的予測）を検出
-- 「絶対に」「どうせ」「もう無理」等のパターン
-- CBT（認知行動療法）の枠組みで応答を構成
-- **現状**: Layer 1（MODERATE）のパターンが一部カバー。独立モジュールとしての実装は Phase 2。
+### Layer 2: Cognitive Pattern Analysis（認知パターン分析 / CBT）`[✅ Phase 2実装済み]`
+- 認知の歪み5類型（全か無か思考・破滅的予測・絶望感・過度な一般化・心のフィルター）を検出
+- ベック絶望尺度（Beck Hopelessness Scale）準拠の絶望感パターンを追加
+- Layer 1と統合する `detectCrisisFull()` でより高いリスクレベルを適用
 
-### Layer 3: Emotional State Modeling（感情状態モデリング / DBT）`[Phase 2で実装予定]`
-- DBT（弁証法的行動療法）に基づく感情調整スキルを応答に組み込む
-- 感情の妥当化（Validation）を最初のステップとする
-- DistressTolerance（苦痛耐性）スキルの案内
-- **現状**: システムプロンプトにDBT原則を含む形で部分的に実現。スコアリングは Phase 2。
+```js
+// 実装例（src/safety/crisis-detection.js より）
+const CBT_DISTORTION_PATTERNS = {
+  allOrNothing:    [/完全に(ダメ|失敗|だめ)(だ|です)?/, ...],
+  catastrophizing: [/取り返しのつかない/, /ずっとこのまま/, ...],
+  hopelessness:    [/何も(変わらない|変わりようがない)/, /(希望|期待)(がない|できない)/, ...],
+  overgeneralization: [/(いつも|毎回|必ず)(失敗する|ダメだ)/, ...],
+  mentalFilter:    [/(何一つ|なにも)うまくいかない/, ...],
+};
+```
 
-### Layer 4: Longitudinal Change Detection（縦断的変化検出）`[Phase 1部分実装・Phase 2で強化]`
+### Layer 3: Emotional State Modeling（感情状態モデリング / DBT）`[✅ Phase 2実装済み]`
+- DBT（弁証法的行動療法）に基づく感情調節困難（Dysregulation）パターンを検出
+- Joiner対人関係理論（孤立感＋負担感の組み合わせ）を高リスク指標として統合
+- 感情強度スコア（0.0〜1.0）で危機レベルに変換し Layer 1/2 と統合
+
+```js
+// 実装例（src/safety/crisis-detection.js より）
+// 孤立感＋負担感の両方が検出された場合 HIGH に昇格
+const joinerRisk = hasIsolation && hasBurden; // Joiner (2005) 対人関係理論
+```
+
+### Layer 4: Longitudinal Change Detection（縦断的変化検出）`[Phase 2強化済み]`
 - 長期記憶サマリー（LTM）との比較により気分の変化を検出
-- 確実性スコアの時間減衰アルゴリズムで記憶を管理（実装済み）
-- 過去3週間との比較で悪化トレンドを検出（Phase 2で実装予定）
+- 確実性スコアの時間減衰アルゴリズムで記憶を管理（Phase 1実装済み）
+- `detectLongitudinalChange(wellbeingHistory)` で直近4セッションのトレンドを評価
+- declining + 直近2件連続ネガティブ → `riskBoost:true`（システムが自動的にフェーズを下げて安全優先）
 
 ### Layer 5: Comprehensive Risk Scoring（総合リスクスコアリング）`[Phase 3で実装予定]`
 - Layer 0〜4 の出力を重み付き合算
@@ -410,24 +426,61 @@ npm audit
 
 ---
 
-## 6.5. Phase 2 実装上の注意事項
+## 6.5. Phase 2 実装済み事項
 
-### フリーミアム「30日制限」について
+### ✅ Layer 2/3 危機検知の強化（Phase 2実装済み）
 
-仕様書 第20章では無料プランの会話履歴保存期間を「直近30日」と定めているが、**Phase 1時点では時間ベースの削除ロジックは未実装**。全履歴をlocalStorageに保存している。
+`src/safety/crisis-detection.js` および `ai_companion_prototype.jsx` に以下を追加した。
 
-Phase 2（フリーミアム実装）時に以下を追加すること：
+- **Layer 2**: `CBT_DISTORTION_PATTERNS`（5類型）+ `detectCognitiveDistortions()` + `detectCrisisComposite()`
+- **Layer 3**: `DBT_DYSREGULATION` + `JOINER_ISOLATION` + `JOINER_BURDEN` + `detectEmotionalState()` + `emotionalStateToCrisisLevel()`
+- **Layer 4 強化**: `detectLongitudinalChange()` — declining + 直近2件ネガティブで `riskBoost:true`
+- **統合関数**: `detectCrisisFull(text)` — Layer 1/2/3 の最大値を返す。メインフローで使用。
+- **テスト**: 93件（Layer 2: 11件・Layer 3: 11件・Layer 4: 7件 追加）
+
+### ✅ フリーミアム「30日制限」（Phase 2実装済み）
+
+無料プランの会話履歴を直近30日に制限する `pruneOldMessages()` を `ai_companion_prototype.jsx` に実装した。
 
 ```js
-// Phase 2で実装予定: 無料プランの30日超過履歴を自動削除
-function pruneOldMessages(msgs, isPaidUser) {
+// 実装済み: 無料プランの30日超過履歴を自動削除
+function pruneOldMessages(msgs, isPaidUser = false) {
   if (isPaidUser) return msgs;
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
   return msgs.filter(m => new Date(m.ts || 0).getTime() > cutoff);
 }
 ```
 
-### Google AdSense 審査リスク
+### ✅ 広告表示制御（Phase 2実装済み）
+
+危機モード・WATCHFUL・MODERATE以上では広告を表示しない `shouldShowAds()` を実装した。
+Google AdSenseのセンシティブカテゴリポリシー違反リスクを回避する設計。
+
+```js
+// 危機・注意モード中は広告を非表示にする（第一原則との整合性）
+function shouldShowAds(crisisLevel, mode) {
+  if (mode === "CRISIS" || mode === "WATCHFUL") return false;
+  if (["CRITICAL","HIGH","MODERATE"].includes(crisisLevel)) return false;
+  return true;
+}
+```
+
+### ✅ 機能4: 週間ソーシャルチャレンジ（Phase 2実装済み）
+
+変化ステージ（Stages of Change）に対応した週次チャレンジを設定パネルに表示する。
+
+```js
+// Stages of Change別チャレンジ（Level 1〜3）
+const WEEKLY_CHALLENGES = {
+  precontemplation: { level:1, title:"気づきのチャレンジ", task:"今週、誰かにいいねかスタンプを1つ送ってみよう。" },
+  contemplation:    { level:1, title:"小さな一歩チャレンジ", ... },
+  preparation:      { level:2, title:"会話チャレンジ", ... },
+  action:           { level:2, title:"つながりチャレンジ", ... },
+  maintenance:      { level:3, title:"深まりチャレンジ", ... },
+};
+```
+
+### Google AdSense 審査リスク（注意事項）
 
 精神的健康・危機介入関連コンテンツはGoogle AdSenseの**センシティブカテゴリポリシー**の対象となる可能性がある。
 
@@ -437,9 +490,9 @@ function pruneOldMessages(msgs, isPaidUser) {
 - 審査通過後も広告停止される可能性（ポリシー変更による）
 
 **コンティンジェンシープラン（優先順）:**
-1. AdSense審査通過 → 予定通り実装
+1. AdSense審査通過 → `shouldShowAds()` を使って通常モード時のみ表示
 2. 審査却下 → Stripeサブスクリプションのみに収益を一本化
-3. 部分承認 → 危機検知が発動したことのないセッションのみに広告を限定表示
+3. 部分承認 → 危機検知が発動したことのないセッションのみに広告を限定表示（`shouldShowAds()` で制御済み）
 
 ---
 

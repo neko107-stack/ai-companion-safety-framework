@@ -30,13 +30,18 @@
     "transform": {
       "^.+\\.[jt]sx?$": "babel-jest"
     },
-    "moduleFileExtensions": ["js", "jsx"],
+    "moduleFileExtensions": [
+      "js",
+      "jsx"
+    ],
     "testMatch": [
       "**/*.test.js",
       "**/*.test.jsx",
       "src/**/*.test.js"
     ],
-    "extensionsToTreatAsEsm": [".jsx"],
+    "extensionsToTreatAsEsm": [
+      ".jsx"
+    ],
     "moduleNameMapper": {
       "^(\\.{1,2}/.*)\\.js$": "$1"
     }

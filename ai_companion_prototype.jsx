@@ -86,6 +86,187 @@ const TIME_FRICTION = {
 const SOCIAL_KEYWORDS   = /友達|家族|同僚|先輩|後輩|親|兄|姉|弟|妹|恋人|彼氏|彼女|上司|先生|クラスメイト|チームメンバー|話した|話してみた|会った|連絡した|メッセージ送|ライン|電話した/;
 const EXTERNAL_KEYWORDS = /外に出|出かけ|散歩|カフェ|学校|会社|仕事|授業|電車|バス|買い物|公園|図書館|ジム|遊び|映画|イベント|旅行/;
 
+// ━━━ Phase 2 — Layer 2: CBT認知パターン分析（Beck, 1979） ━━━━━━━━━━━━━━━
+// 認知の歪み5類型: 全か無か / 破滅的予測 / 絶望感 / 過度な一般化 / 心のフィルター
+
+const CBT_DISTORTION_PATTERNS = {
+  allOrNothing: [
+    /完全に(ダメ|失敗|だめ)(だ|です)?/,
+    /完璧じゃないと(意味がない|ダメだ|だめだ)/,
+    /(成功か失敗か|勝ちか負けか)しかない/,
+    /(一度も|何ひとつ|何一つ)(できた|うまくいった)ことがない/,
+    /(全部|すべて)(ダメ|だめ|失敗|終わり)(だ|です)?/,
+  ],
+  catastrophizing: [
+    /取り返しのつかない/,
+    /もう(完全に)?終わり(だ|です)?$/,
+    /ずっとこのまま(だ|です|でいる)/,
+    /何もかも(崩れて|壊れて|ダメに)いく/,
+    /もう(どうにも|どうしようも)ならない/,
+  ],
+  hopelessness: [
+    /何も(変わらない|変わりようがない)/,
+    /(先|将来)(が|は)(ない|見えない|暗い|真っ暗)/,
+    /どうせ(何も|誰も)(変わらない|助けてくれない|無駄)/,
+    /(希望|期待)(がない|できない|を持てない|はない)/,
+    /なんの(意味|価値|希望)(もない|があるんだろう)/,
+  ],
+  overgeneralization: [
+    /(いつも|毎回|必ず)(失敗する|ダメだ|うまくいかない|こうなる)/,
+    /どうせ(また|いつも)(同じ|失敗|ダメ)(だ|です)?/,
+    /どんなに(頑張っても|努力しても)(無駄|ダメ|うまくいかない)/,
+  ],
+  mentalFilter: [
+    /(何一つ|なにも)(いい|良い|うまくいく)(ことがない|こともない)/,
+    /(何一つ|なにも)うまくいかない/,
+    /良いこと(なんて|は)(一つも|何も)(ない|ない気がする)/,
+    /(ずっと|いつまでも)(うまくいかない|ダメなまま)/,
+    /何をしても(うまくいかない|ダメだ|意味がない)/,
+  ],
+};
+
+function detectCognitiveDistortions(text) {
+  let matched = 0;
+  for (const patterns of Object.values(CBT_DISTORTION_PATTERNS)) {
+    if (patterns.some(p => p.test(text))) matched++;
+  }
+  if (matched >= 3) return "HIGH";
+  if (matched === 2) return "MODERATE";
+  if (matched === 1) return "MILD";
+  return "NONE";
+}
+
+// ━━━ Phase 2 — Layer 3: DBT感情状態モデリング（Linehan, 1993） ━━━━━━━━━━━━
+// 感情タイプ / 調節困難 / Joiner対人関係理論（孤立感＋負担感）
+
+const DBT_DYSREGULATION = [
+  /感情(が|を)(抑えられない|コントロールできない|止められない)/,
+  /気持ち(が|を)(抑えられない|止められない|コントロールできない)/,
+  /(怒り|悲しみ|不安)(が|は)爆発(しそう|した)/,
+  /(頭の中|気持ち)(が|は)グルグル(してる|する)/,
+];
+const JOINER_ISOLATION = [
+  /誰(も|にも)(わかって|理解して|助けて)くれない/,
+  /一人(だ|だし|しかいない|ぼっち)/,
+  /誰(にも)頼れない/,
+  /(友達|家族|仲間)(が|は)(いない|できない)/,
+  /孤独(だ|で|しかない)/,
+];
+const JOINER_BURDEN = [
+  /みんな(の|に)(迷惑|負担)(だ|をかけてる|になってる)/,
+  /(いない方が|いなければ)(みんな|周り)(が|は)(楽|助かる)/,
+  /自分(が|は)(いる|存在する)(だけで|こと自体)(迷惑|邪魔)/,
+  /(家族|周り|みんな)(の|に)負担(になってる|をかけている)/,
+];
+
+function detectEmotionalState(text) {
+  const dysregulated = DBT_DYSREGULATION.some(p => p.test(text));
+  const hasIsolation = JOINER_ISOLATION.some(p => p.test(text));
+  const hasBurden    = JOINER_BURDEN.some(p => p.test(text));
+  const joinerRisk   = hasIsolation && hasBurden;
+  let intensity = 0.2;
+  if (dysregulated) intensity += 0.3;
+  if (joinerRisk)   intensity += 0.3;
+  return { intensity: Math.min(1.0, intensity), dysregulated, joinerRisk };
+}
+
+// Layer 1 + 2 + 3 完全統合: 最も高いリスクレベルを返す
+function detectCrisisFull(text) {
+  const l1 = detectCrisis(text);
+  if (l1 === "CRITICAL") return "CRITICAL";
+  const levels = ["NONE","MILD","MODERATE","HIGH","CRITICAL"];
+  const l2str = detectCognitiveDistortions(text);
+  const { intensity, dysregulated, joinerRisk } = detectEmotionalState(text);
+  let l3str = "NONE";
+  if (joinerRisk || (dysregulated && intensity >= 0.7)) l3str = "HIGH";
+  else if (dysregulated || intensity >= 0.6)           l3str = "MODERATE";
+  else if (intensity >= 0.4)                           l3str = "MILD";
+  return levels[Math.max(levels.indexOf(l1), levels.indexOf(l2str), levels.indexOf(l3str))];
+}
+
+// ━━━ Phase 2 — 機能4: 週間ソーシャルチャレンジ（Weekly Social Challenge） ━━━
+// SDT理論（Deci & Ryan, 2000）: 自律性・有能感・関係性の3要素を段階的に充足
+// Stages of Change ステージ別チャレンジ（Level 1〜3）
+
+const WEEKLY_CHALLENGES = {
+  precontemplation: {
+    level: 1,
+    title: "気づきのチャレンジ",
+    task:  "今週、誰かに「いいね」かスタンプを1つ送ってみよう。返信は来なくていい。",
+    tip:   "返事を期待しなくていい。送った、それだけで十分。",
+  },
+  contemplation: {
+    level: 1,
+    title: "小さな一歩チャレンジ",
+    task:  "今週、久しぶりに連絡したい人を1人だけ思い浮かべてみよう。名前を心の中で言うだけでもOK。",
+    tip:   "実際に連絡しなくていい。思い浮かべるだけが今週のゴール。",
+  },
+  preparation: {
+    level: 2,
+    title: "会話チャレンジ",
+    task:  "今週、誰かと短いやり取りを1往復だけやってみよう（LINEでも、一言でも）。",
+    tip:   "長い会話じゃなくていい。「最近どう？」の一言で十分。",
+  },
+  action: {
+    level: 2,
+    title: "つながりチャレンジ",
+    task:  "今週、誰かと5分だけ話してみよう。電話でも対面でも。",
+    tip:   "話す内容を準備しなくていい。「最近どうしてた？」だけで始められる。",
+  },
+  maintenance: {
+    level: 3,
+    title: "深まりチャレンジ",
+    task:  "今週、誰かと一緒に何かやってみよう（カフェ、散歩、通話、なんでも）。",
+    tip:   "この習慣をこれからも続けていこう。あなたはもう十分できてる。",
+  },
+};
+
+const WEEKLY_CHALLENGE_KEY = "aico_weeklyChallenge";
+
+function getWeeklyChallenge(bStage) {
+  const now = new Date();
+  const weekId = `${now.getFullYear()}-W${Math.ceil((now.getDate() + new Date(now.getFullYear(), now.getMonth(), 1).getDay()) / 7)}`;
+  try {
+    const raw = localStorage.getItem(WEEKLY_CHALLENGE_KEY);
+    const saved = raw ? JSON.parse(raw) : null;
+    if (saved && saved.weekId === weekId) return saved;
+  } catch {}
+  const challenge = WEEKLY_CHALLENGES[bStage] || WEEKLY_CHALLENGES.precontemplation;
+  const entry = { weekId, ...challenge, completed: false, bStage };
+  try { localStorage.setItem(WEEKLY_CHALLENGE_KEY, JSON.stringify(entry)); } catch {}
+  return entry;
+}
+
+function markWeeklyChallengeComplete() {
+  try {
+    const raw = localStorage.getItem(WEEKLY_CHALLENGE_KEY);
+    if (!raw) return;
+    const entry = JSON.parse(raw);
+    entry.completed = true;
+    localStorage.setItem(WEEKLY_CHALLENGE_KEY, JSON.stringify(entry));
+  } catch {}
+}
+
+// ━━━ Phase 2 — フリーミアム設計 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 無料プランの会話履歴を直近30日に制限する（Phase 2実装。isPaidUser=trueなら全件保持）
+function pruneOldMessages(msgs, isPaidUser = false) {
+  if (isPaidUser) return msgs;
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  return msgs.filter(m => {
+    const ts = m.ts ? new Date(m.ts).getTime() : 0;
+    return ts > cutoff;
+  });
+}
+
+// 広告表示制御: 危機モード・WATCHFUL・MODERATE以上では広告を非表示にする
+// Google AdSenseポリシー上のセンシティブコンテンツリスクを回避する設計
+function shouldShowAds(crisisLevel, mode) {
+  if (mode === "CRISIS" || mode === "WATCHFUL") return false;
+  if (["CRITICAL","HIGH","MODERATE"].includes(crisisLevel)) return false;
+  return true;
+}
+
 const EXPORT_VERSION = "1.0";
 
 // ━━━ セッション時間認識システム（A〜E案） ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1990,6 +2171,32 @@ function SettingsPanel({ S, setS, apiConfig, companion, profile, msgs, onClose, 
           );
         })()}
 
+        {/* 機能4: 週間ソーシャルチャレンジ（Phase 2実装） */}
+        {(() => {
+          const ch = getWeeklyChallenge(getBridgingStage());
+          const levelColor = ch.level === 3 ? "#7C3AED" : ch.level === 2 ? "#D97706" : "#2563EB";
+          const levelBg    = ch.level === 3 ? "#F5F3FF" : ch.level === 2 ? "#FFFBEB" : "#EFF6FF";
+          const levelBorder= ch.level === 3 ? "#C4B5FD" : ch.level === 2 ? "#FDE68A" : "#BFDBFE";
+          return (
+            <div style={{marginBottom:14,padding:"12px 14px",borderRadius:12,background:levelBg,border:`1px solid ${levelBorder}`}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+                <div style={{fontSize:11,fontWeight:700,color:levelColor,letterSpacing:"0.06em"}}>🎯 今週のチャレンジ</div>
+                <div style={{fontSize:10,padding:"1px 7px",borderRadius:10,background:levelColor,color:"#FFF",fontWeight:600}}>Lv.{ch.level}</div>
+                {ch.completed && <div style={{fontSize:10,padding:"1px 7px",borderRadius:10,background:"#10B981",color:"#FFF",fontWeight:600}}>達成！</div>}
+              </div>
+              <div style={{fontSize:12,fontWeight:600,color:"#1E293B",marginBottom:4}}>{ch.title}</div>
+              <div style={{fontSize:12,color:"#374151",lineHeight:1.6,marginBottom:6}}>{ch.task}</div>
+              <div style={{fontSize:11,color:"#6B7280",lineHeight:1.5,marginBottom:8}}>💡 {ch.tip}</div>
+              {!ch.completed && (
+                <button
+                  onClick={() => { markWeeklyChallengeComplete(); setS(p => ({...p})); }}
+                  style={{padding:"6px 14px",borderRadius:8,border:"none",background:levelColor,color:"#FFF",fontWeight:600,fontSize:12,cursor:"pointer"}}
+                >達成した！</button>
+              )}
+            </div>
+          );
+        })()}
+
         <button onClick={onClose} style={{width:"100%",padding:"12px 0",borderRadius:12,border:"none",background:ac.main,color:"#FFF",fontWeight:700,fontSize:14,cursor:"pointer"}}>閉じる</button>
         <button onClick={onOpenErrorLog} style={{width:"100%",padding:"9px 0",borderRadius:10,border:"1.5px solid #E2E8F0",background:"#F8FAFC",color:"#64748B",fontWeight:600,fontSize:12,cursor:"pointer",marginTop:7,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
           🔍 エラーログを確認する（{getLogs().length}件）
@@ -2221,7 +2428,7 @@ export default function AICompanionApp() {
     setMsgs(p => [...p, { id:Date.now(), role:"user", text:text.trim() }]);
     setInput(""); setExpanded(false); setLoading(true);
 
-    const crisisLevel = detectCrisis(text);
+    const crisisLevel = detectCrisisFull(text); // Layer 1+2+3 統合検知（Phase 2）
     setCl(crisisLevel);
     let nm = mode;
     if (crisisLevel === "CRITICAL") {
