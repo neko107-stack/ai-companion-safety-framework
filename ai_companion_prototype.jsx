@@ -249,9 +249,65 @@ function markWeeklyChallengeComplete() {
 
 // ━━━ Phase 2 — フリーミアム設計 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-// 無料プランの会話履歴を直近30日に制限する（Phase 2実装。isPaidUser=trueなら全件保持）
-function pruneOldMessages(msgs, isPaidUser = false) {
-  if (isPaidUser) return msgs;
+// ─── ユーザー層（Tier）定義 ───────────────────────────────────────────────────
+// BYOK        : ユーザー自身のAPIキーを使用（無料・モデル任意）
+// HOST_FREE   : 運営者のGemini Flashキーを使用（無料・月10セッション上限）
+// SUPPORTER   : 運営者のClaude Haikuキーを使用（¥300/月・上限なし）
+
+const USER_TIER = { BYOK: "BYOK", HOST_FREE: "HOST_FREE", SUPPORTER: "SUPPORTER" };
+
+const HOST_FREE_ENGINE = "gemini";
+const HOST_FREE_MODEL  = "gemini-2.0-flash";
+const SUPPORTER_ENGINE = "claude";
+const SUPPORTER_MODEL  = "claude-haiku-4-5-20251001";
+const MAX_HOST_FREE_SESSIONS = 10;
+const MONTHLY_USAGE_KEY   = "aico_hostFreeUsage";
+const SUPPORTER_TOKEN_KEY = "aico_supporterToken";
+
+function getMonthKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function getMonthlyUsage() {
+  try {
+    const raw = localStorage.getItem(MONTHLY_USAGE_KEY);
+    const saved = raw ? JSON.parse(raw) : null;
+    if (saved && saved.month === getMonthKey()) return saved;
+  } catch {}
+  return { month: getMonthKey(), count: 0 };
+}
+
+function incrementMonthlyUsage() {
+  const usage = getMonthlyUsage();
+  usage.count += 1;
+  try { localStorage.setItem(MONTHLY_USAGE_KEY, JSON.stringify(usage)); } catch {}
+  return usage;
+}
+
+function isHostFreeSessionLimitReached() {
+  return getMonthlyUsage().count >= MAX_HOST_FREE_SESSIONS;
+}
+
+// プロキシ経由でAIを呼び出す（HOST_FREE / SUPPORTER 専用）
+async function callAIProxy(tier, tierToken, engine, model, systemPrompt, messages, phase) {
+  const res = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tier, tierToken, engine, model, systemPrompt, messages }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Proxy error ${res.status}`);
+  }
+  const { text } = await res.json();
+  return text || "";
+}
+
+// 会話履歴を tier に応じて制限する
+// SUPPORTER: 全件保持 / HOST_FREE: 直近30日 / BYOK: 直近30日
+function pruneOldMessages(msgs, userTier = USER_TIER.BYOK) {
+  if (userTier === USER_TIER.SUPPORTER) return msgs;
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
   return msgs.filter(m => {
     const ts = m.ts ? new Date(m.ts).getTime() : 0;
@@ -261,7 +317,9 @@ function pruneOldMessages(msgs, isPaidUser = false) {
 
 // 広告表示制御: 危機モード・WATCHFUL・MODERATE以上では広告を非表示にする
 // Google AdSenseポリシー上のセンシティブコンテンツリスクを回避する設計
-function shouldShowAds(crisisLevel, mode) {
+// SUPPORTER はサブスク有料のため広告非表示
+function shouldShowAds(crisisLevel, mode, userTier = USER_TIER.BYOK) {
+  if (userTier === USER_TIER.SUPPORTER) return false;
   if (mode === "CRISIS" || mode === "WATCHFUL") return false;
   if (["CRITICAL","HIGH","MODERATE"].includes(crisisLevel)) return false;
   return true;
@@ -1401,6 +1459,154 @@ function ObPreviewStep({ obAns, onConfirm, onBack, onChangeCsOpt, onChangePemOpt
   );
 }
 
+// ━━━ プラン選択画面（提案6: PlanSelectionScreen） ━━━
+
+function PlanSelectionScreen({ onSelectBYOK, onSelectHostFree, onSelectSupporter }) {
+  const [loadingStripe, setLoadingStripe] = useState(false);
+  const [stripeError,   setStripeError]   = useState("");
+
+  const handleSupporter = async () => {
+    setLoadingStripe(true);
+    setStripeError("");
+    try {
+      const res = await fetch("/api/stripe-checkout", { method: "POST", headers: { "Content-Type": "application/json" } });
+      if (!res.ok) throw new Error("決済ページの準備に失敗しました");
+      const { url } = await res.json();
+      window.location.href = url;
+    } catch (err) {
+      setStripeError(err.message);
+      setLoadingStripe(false);
+    }
+  };
+
+  const plans = [
+    {
+      id: "HOST_FREE",
+      badge: "無料",
+      badgeColor: "#10B981",
+      title: "かんたん無料",
+      subtitle: "APIキー不要・すぐ始める",
+      icon: "🌱",
+      color: "#10B981",
+      bgColor: "#F0FDF4",
+      borderColor: "#BBF7D0",
+      model: "Gemini 2.0 Flash",
+      modelNote: "（Google）",
+      limit: `月${MAX_HOST_FREE_SESSIONS}セッションまで`,
+      limitColor: "#059669",
+      features: ["APIキー設定不要", "安全機能フル搭載", "月" + MAX_HOST_FREE_SESSIONS + "回まで無料"],
+      action: onSelectHostFree,
+      actionLabel: "無料で始める",
+    },
+    {
+      id: "SUPPORTER",
+      badge: "¥300/月",
+      badgeColor: "#6366F1",
+      title: "サポーター",
+      subtitle: "運営を支援・より高品質に",
+      icon: "✦",
+      color: "#6366F1",
+      bgColor: "#EEF2FF",
+      borderColor: "#C7D2FE",
+      model: "Claude Haiku 4.5",
+      modelNote: "（Anthropic）",
+      limit: "セッション無制限",
+      limitColor: "#4F46E5",
+      features: ["APIキー設定不要", "Claude Haiku（高品質）", "セッション無制限", "会話履歴フル保持"],
+      action: handleSupporter,
+      actionLabel: loadingStripe ? "準備中…" : "¥300/月で登録",
+      loading: loadingStripe,
+    },
+    {
+      id: "BYOK",
+      badge: "上級者向け",
+      badgeColor: "#64748B",
+      title: "自分のAPIキー",
+      subtitle: "BYOK — お好みのAIモデルで",
+      icon: "🔑",
+      color: "#64748B",
+      bgColor: "#F8FAFC",
+      borderColor: "#E2E8F0",
+      model: "Claude / GPT / Gemini / Llama",
+      modelNote: "（選択可）",
+      limit: "モデル・回数は自分のプランに依存",
+      limitColor: "#475569",
+      features: ["AIモデルを自由に選択", "セッション数制限なし", "APIキーの設定が必要"],
+      action: onSelectBYOK,
+      actionLabel: "APIキーを設定する",
+    },
+  ];
+
+  return (
+    <div style={{minHeight:"100%",background:"#F8F9FB",fontFamily:"'Helvetica Neue',Arial,sans-serif",padding:"20px 16px 32px"}}>
+      <div style={{maxWidth:420,margin:"0 auto"}}>
+        <div style={{textAlign:"center",marginBottom:24}}>
+          <div style={{width:52,height:52,borderRadius:16,background:"#EEF2FF",border:"2px solid #C7D2FE",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,margin:"0 auto 14px"}}>🌿</div>
+          <h2 style={{fontSize:19,fontWeight:700,color:"#1E293B",margin:"0 0 6px"}}>使い方を選んでください</h2>
+          <p style={{fontSize:13,color:"#64748B",margin:0,lineHeight:1.7}}>
+            どのプランでも安全機能（危機検知・相談窓口案内）は<br/>完全に無料で利用できます。
+          </p>
+        </div>
+
+        <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:16}}>
+          {plans.map(plan => (
+            <div key={plan.id} style={{background:plan.bgColor,border:`1.5px solid ${plan.borderColor}`,borderRadius:16,padding:"16px 16px 14px",transition:"box-shadow 0.2s"}}>
+              <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:12}}>
+                <div style={{width:40,height:40,borderRadius:12,background:plan.color+"18",border:`1.5px solid ${plan.color}30`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0,color:plan.color}}>
+                  {plan.icon}
+                </div>
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:2}}>
+                    <span style={{fontSize:15,fontWeight:700,color:"#1E293B"}}>{plan.title}</span>
+                    <span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:10,background:plan.badgeColor,color:"#FFF"}}>{plan.badge}</span>
+                  </div>
+                  <div style={{fontSize:11,color:"#64748B"}}>{plan.subtitle}</div>
+                </div>
+              </div>
+
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:11,fontWeight:600,color:"#94A3B8",marginBottom:5}}>使用AIモデル</div>
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <span style={{fontSize:12,fontWeight:600,color:plan.color}}>{plan.model}</span>
+                  <span style={{fontSize:11,color:"#94A3B8"}}>{plan.modelNote}</span>
+                </div>
+                <div style={{fontSize:11,color:plan.limitColor,marginTop:3,fontWeight:500}}>{plan.limit}</div>
+              </div>
+
+              <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:14}}>
+                {plan.features.map(f => (
+                  <span key={f} style={{fontSize:11,padding:"3px 9px",borderRadius:12,background:"#FFF",border:`1px solid ${plan.borderColor}`,color:"#475569"}}>
+                    ✓ {f}
+                  </span>
+                ))}
+              </div>
+
+              <button
+                onClick={plan.action}
+                disabled={!!plan.loading}
+                style={{width:"100%",padding:"11px 0",borderRadius:12,border:"none",background:plan.loading?"#E2E8F0":plan.color,color:plan.loading?"#94A3B8":"#FFF",fontWeight:700,fontSize:13,cursor:plan.loading?"not-allowed":"pointer",boxShadow:plan.loading?"none":`0 3px 10px ${plan.color}35`,transition:"all 0.2s"}}
+              >
+                {plan.actionLabel}
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {stripeError && (
+          <div style={{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:10,padding:"10px 13px",fontSize:12,color:"#DC2626",marginBottom:12}}>
+            {stripeError}
+          </div>
+        )}
+
+        <p style={{textAlign:"center",fontSize:11,color:"#94A3B8",lineHeight:1.7,margin:0}}>
+          あとからプランの変更ができます。<br/>
+          どのプランでも会話データはあなたのデバイスに保存されます。
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ━━━ APIセットアップ画面 ━━━
 
 function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
@@ -2300,6 +2506,46 @@ export default function AICompanionApp() {
     configured:       lsGet("apiConfigured", false),
   }));
 
+  // ━━ Tier 管理（提案1〜3） ━━
+  const [userTier,       setUserTierState] = useState(() => lsGet("userTier", USER_TIER.BYOK));
+  const [tierToken,      setTierToken]     = useState(() => { try { return localStorage.getItem(SUPPORTER_TOKEN_KEY) || ""; } catch { return ""; } });
+  const [hostFreeUsage,  setHostFreeUsage] = useState(() => getMonthlyUsage());
+  const [showLimitModal, setShowLimitModal] = useState(false);
+
+  const setUserTier = (tier) => {
+    setUserTierState(tier);
+    lsSet("userTier", tier);
+  };
+
+  const activateSupporter = (token) => {
+    setTierToken(token);
+    setUserTier(USER_TIER.SUPPORTER);
+    try { localStorage.setItem(SUPPORTER_TOKEN_KEY, token); } catch {}
+  };
+
+  // Stripe リダイレクト戻り処理（?supporter_session=xxx）
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get("supporter_session");
+    const cancelled = params.get("plan_cancelled");
+    if (cancelled) {
+      window.history.replaceState({}, "", window.location.pathname);
+      return;
+    }
+    if (!sessionId) return;
+    window.history.replaceState({}, "", window.location.pathname);
+    fetch(`/api/verify-session?session=${encodeURIComponent(sessionId)}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.valid) {
+          activateSupporter(sessionId);
+          if (phase !== "chat") setPhase("onboarding");
+        }
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const scrollRef   = useRef(null);
   const histRef     = useRef(lsGet("history", []));
 
@@ -2526,20 +2772,47 @@ export default function AICompanionApp() {
     histRef.current = [...histRef.current.slice(-18), { role:"user", content:text, ts: nowTs }];
     lsSet("history", histRef.current);
 
-    // ユーザーが設定したAPIキーとエンジンで呼び出す
-    const engId  = apiConfig.mainEngine || "claude";
-    const rawModel = apiConfig.models?.[engId] || "claude-sonnet-4-20250514";
-    // Llama でカスタムモデル名が選ばれている場合は解決する
-    const model  = (engId === "llama" && rawModel === "custom")
-      ? (apiConfig.llamaCustomModel || "llama-local")
-      : rawModel;
-    const apiKey = apiConfig.keys?.[engId] || "";  // ← ユーザーのAPIキー
+    // ─── Tier別 モデルルーティング（提案3） ───────────────────────────────────
+    // HOST_FREE: セッション上限チェック
+    if (userTier === USER_TIER.HOST_FREE && isNewISession) {
+      if (isHostFreeSessionLimitReached()) {
+        setShowLimitModal(true);
+        setLoading(false);
+        return;
+      }
+      const usage = incrementMonthlyUsage();
+      setHostFreeUsage({ ...usage });
+    }
+
+    let engId, model, apiKey, useProxy;
+    if (userTier === USER_TIER.HOST_FREE) {
+      engId    = HOST_FREE_ENGINE;
+      model    = HOST_FREE_MODEL;
+      apiKey   = "";
+      useProxy = true;
+    } else if (userTier === USER_TIER.SUPPORTER) {
+      engId    = SUPPORTER_ENGINE;
+      model    = SUPPORTER_MODEL;
+      apiKey   = "";
+      useProxy = true;
+    } else {
+      // BYOK: ユーザーが設定したAPIキーとエンジンで呼び出す
+      engId = apiConfig.mainEngine || "claude";
+      const rawModel = apiConfig.models?.[engId] || "claude-sonnet-4-20250514";
+      model    = (engId === "llama" && rawModel === "custom")
+        ? (apiConfig.llamaCustomModel || "llama-local") : rawModel;
+      apiKey   = apiConfig.keys?.[engId] || "";
+      useProxy = false;
+    }
 
     // D案: 時制注釈付き履歴をAPIに渡す（表示用のhistRefとは別物）
     const annotatedHistory = buildAnnotatedHistory(histRef.current);
+    const sysPrompt = buildPrompt(companion, nm, profile, S, convMode) + extra;
 
     try {
-      const aiText = await callAI(engId, model, apiKey, buildPrompt(companion, nm, profile, S, nm === 'NORMAL' ? convMode : convMode) + extra, annotatedHistory, phase, { llamaEndpoint: apiConfig.llamaEndpoint });
+      const aiText = useProxy
+        ? await callAIProxy(userTier, tierToken, engId, model, sysPrompt, annotatedHistory, phase)
+        : await callAI(engId, model, apiKey, sysPrompt, annotatedHistory, phase, { llamaEndpoint: apiConfig.llamaEndpoint });
       const action = parseSettingAction(aiText);
       if (action) applySettingAction(action);
       const clean = action ? aiText.replace(/\{"action":"set_setting","key":"[^"]+","value":"[^"]+"\}/, "").trim() : aiText;
@@ -2570,14 +2843,21 @@ export default function AICompanionApp() {
       setConvCount(newCount);
       // 20往復ごとに長期記憶サマリーを自動生成
       if (newCount % 20 === 0) {
-        const engId2    = apiConfig.mainEngine || "claude";
-        const rawModel2 = apiConfig.models?.[engId2] || "claude-sonnet-4-20250514";
-        const model2    = (engId2 === "llama" && rawModel2 === "custom")
-          ? (apiConfig.llamaCustomModel || "llama-local") : rawModel2;
-        const apiKey2 = apiConfig.keys?.[engId2] || "";
-        generateLTMSummary(engId2, model2, apiKey2, companion, profile, msgs, { llamaEndpoint: apiConfig.llamaEndpoint }).then(entry => {
-          if (entry) { setLtmToast(true); setTimeout(() => setLtmToast(false), 4000); }
-        });
+        // LTM生成は常にBYOKエンジン（または HOST_FREE の Gemini Flash）で行う
+        const ltmEngId = userTier === USER_TIER.BYOK
+          ? (apiConfig.mainEngine || "claude") : HOST_FREE_ENGINE;
+        const ltmRawModel = userTier === USER_TIER.BYOK
+          ? (apiConfig.models?.[ltmEngId] || "claude-sonnet-4-20250514") : HOST_FREE_MODEL;
+        const ltmModel = (ltmEngId === "llama" && ltmRawModel === "custom")
+          ? (apiConfig.llamaCustomModel || "llama-local") : ltmRawModel;
+        const ltmKey = userTier === USER_TIER.BYOK ? (apiConfig.keys?.[ltmEngId] || "") : "";
+        if (userTier !== USER_TIER.BYOK) {
+          // プロキシ経由の LTM 生成は省略（コスト最小化）
+        } else {
+          generateLTMSummary(ltmEngId, ltmModel, ltmKey, companion, profile, msgs, { llamaEndpoint: apiConfig.llamaEndpoint }).then(entry => {
+            if (entry) { setLtmToast(true); setTimeout(() => setLtmToast(false), 4000); }
+          });
+        }
       }
       // 100往復ごとにバックアップリマインダー
       if (newCount % 100 === 0) setBackupReminder(true);
@@ -2609,7 +2889,7 @@ export default function AICompanionApp() {
         try { localStorage.setItem("aico_consented","1"); } catch {}
       }
       if (wStep < SLIDES.length - 1) setWStep(s => s+1);
-      else setPhase("api_setup");
+      else setPhase("plan_selection");
     };
     return (
       <div style={{minHeight:"100vh",background:"#FFF",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 18px",fontFamily:"'Helvetica Neue',Arial,sans-serif",overflowY:"auto"}}>
@@ -2721,9 +3001,31 @@ export default function AICompanionApp() {
               disabled={sl.isConsent && !consented}
               style={{flex:1,padding:"12px 0",borderRadius:11,border:"none",background:sl.isConsent&&!consented?"#E2E8F0":sl.col,color:sl.isConsent&&!consented?"#94A3B8":"#FFF",fontWeight:700,fontSize:14,cursor:sl.isConsent&&!consented?"not-allowed":"pointer",boxShadow:sl.isConsent&&!consented?"none":`0 3px 12px ${sl.col}40`,transition:"all 0.2s"}}
             >
-              {sl.isLast ? "AIエンジンを設定する →" : sl.isConsent ? "同意してはじめる →" : "次へ →"}
+              {sl.isLast ? "プランを選ぶ →" : sl.isConsent ? "同意してはじめる →" : "次へ →"}
             </button>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // プラン選択画面（提案6）
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if (phase === "plan_selection") {
+    return (
+      <div style={{height:"100vh",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        <div style={{flexShrink:0,padding:"12px 14px",borderBottom:"1px solid #E2E8F0",background:"#FFF",display:"flex",alignItems:"center",gap:10}}>
+          <button onClick={() => setPhase("welcome")} style={{background:"none",border:"none",color:"#64748B",cursor:"pointer",fontSize:13,padding:0}}>← 戻る</button>
+          <div style={{flex:1,textAlign:"center",fontSize:14,fontWeight:700,color:"#1E293B"}}>プランを選ぶ</div>
+          <div style={{width:40}} />
+        </div>
+        <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+          <PlanSelectionScreen
+            onSelectBYOK={() => setPhase("api_setup")}
+            onSelectHostFree={() => { setUserTier(USER_TIER.HOST_FREE); setPhase("onboarding"); }}
+            onSelectSupporter={() => {}}
+          />
         </div>
       </div>
     );
@@ -2900,6 +3202,52 @@ export default function AICompanionApp() {
         </div>
       )}
 
+      {/* セッション上限モーダル（提案7: HOST_FREE専用） */}
+      {showLimitModal && (
+        <div style={{position:"absolute",inset:0,background:"rgba(15,23,42,0.65)",zIndex:290,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:"#FFF",borderRadius:18,padding:22,maxWidth:320,width:"100%",boxShadow:"0 20px 50px rgba(0,0,0,0.25)"}}>
+            <div style={{fontSize:22,textAlign:"center",marginBottom:10}}>🌱</div>
+            <div style={{fontSize:15,fontWeight:700,color:"#1E293B",textAlign:"center",marginBottom:8}}>
+              今月の無料枠を使い切りました
+            </div>
+            <div style={{fontSize:12,color:"#64748B",lineHeight:1.8,textAlign:"center",marginBottom:16}}>
+              無料プランは月{MAX_HOST_FREE_SESSIONS}セッションまでです。<br/>
+              来月になるとリセットされます。<br/>
+              今すぐ続けたい場合はサポータープランをご検討ください。
+            </div>
+            <div style={{background:"#EEF2FF",borderRadius:12,padding:"12px 14px",marginBottom:16,textAlign:"center"}}>
+              <div style={{fontSize:13,fontWeight:700,color:"#4F46E5",marginBottom:4}}>サポータープラン</div>
+              <div style={{fontSize:12,color:"#6366F1",marginBottom:4}}>¥300/月 · Claude Haiku · 無制限</div>
+              <div style={{fontSize:11,color:"#94A3B8"}}>または自分のAPIキーを使う（BYOK）</div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              <button
+                onClick={async () => {
+                  setShowLimitModal(false);
+                  try {
+                    const r = await fetch("/api/stripe-checkout", { method: "POST", headers: { "Content-Type": "application/json" } });
+                    const { url } = await r.json();
+                    window.location.href = url;
+                  } catch {}
+                }}
+                style={{padding:"11px 0",borderRadius:11,border:"none",background:"#6366F1",color:"#FFF",fontWeight:700,fontSize:13,cursor:"pointer",boxShadow:"0 3px 10px rgba(99,102,241,0.3)"}}>
+                ¥300/月 サポーターになる
+              </button>
+              <button
+                onClick={() => { setShowLimitModal(false); setUserTier(USER_TIER.BYOK); setPhase("api_setup"); }}
+                style={{padding:"10px 0",borderRadius:11,border:"1.5px solid #E2E8F0",background:"#FFF",color:"#475569",fontSize:13,cursor:"pointer"}}>
+                自分のAPIキーを設定する
+              </button>
+              <button
+                onClick={() => setShowLimitModal(false)}
+                style={{padding:"8px 0",background:"none",border:"none",color:"#94A3B8",fontSize:12,cursor:"pointer"}}>
+                来月まで待つ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ヘッダー */}
       <div style={{padding:"11px 13px",display:"flex",alignItems:"center",gap:9,borderBottom:`1px solid ${T.panelBorder}`,background:T.headerBg,boxShadow:"0 1px 3px rgba(0,0,0,0.05)"}}>
         <div style={{width:34,height:34,borderRadius:"50%",background:ac.light,border:`2px solid ${modeAc}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0,transition:"all 0.4s"}}>
@@ -2911,9 +3259,22 @@ export default function AICompanionApp() {
             {ind && <div style={{width:7,height:7,borderRadius:"50%",background:ind.color,animation:"pls 2s infinite",flexShrink:0}} />}
             <div style={{width:5,height:5,borderRadius:"50%",background:modeAc,flexShrink:0,transition:"background 0.4s"}} />
             <span style={{fontSize:11,color:T.subText}}>{{ NORMAL:"通常", WATCHFUL:"見守り中", CRISIS:"そばにいるよ" }[mode]}モード</span>
-            <span style={{fontSize:10,color:T.subText,marginLeft:4,padding:"1px 5px",borderRadius:6,background:T.panelBorder}}>
-              {AI_ENGINES.find(e => e.id === apiConfig.mainEngine)?.name || "Claude"}
-            </span>
+            {/* Tier表示（提案7） */}
+            {userTier === USER_TIER.HOST_FREE && (
+              <span style={{fontSize:10,color:"#059669",marginLeft:4,padding:"1px 6px",borderRadius:6,background:"#F0FDF4",border:"1px solid #BBF7D0",fontWeight:600}}>
+                無料 {MAX_HOST_FREE_SESSIONS - hostFreeUsage.count}/{MAX_HOST_FREE_SESSIONS}
+              </span>
+            )}
+            {userTier === USER_TIER.SUPPORTER && (
+              <span style={{fontSize:10,color:"#4F46E5",marginLeft:4,padding:"1px 6px",borderRadius:6,background:"#EEF2FF",border:"1px solid #C7D2FE",fontWeight:600}}>
+                ✦ サポーター
+              </span>
+            )}
+            {userTier === USER_TIER.BYOK && (
+              <span style={{fontSize:10,color:T.subText,marginLeft:4,padding:"1px 5px",borderRadius:6,background:T.panelBorder}}>
+                {AI_ENGINES.find(e => e.id === apiConfig.mainEngine)?.name || "Claude"}
+              </span>
+            )}
           </div>
         </div>
         <span style={{fontSize:11,color:T.subText,marginRight:4}}>{profile.un}さん</span>
