@@ -3278,7 +3278,6 @@ export default function AICompanionApp() {
           </div>
         </div>
         <span style={{fontSize:11,color:T.subText,marginRight:4}}>{profile.un}さん</span>
-        <button onClick={() => setShowSettings(true)} style={{width:28,height:28,borderRadius:8,background:ac.light,border:`1px solid ${ac.main}30`,color:ac.main,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>⚙</button>
       </div>
 
       {/* 危機インジケーターバー */}
@@ -3376,20 +3375,28 @@ export default function AICompanionApp() {
 
       {/* フッター */}
       <div style={{padding:"9px 13px 13px",borderTop:`1px solid ${T.panelBorder}`,background:T.headerBg}}>
-        <div style={{display:"flex",alignItems:"flex-end",gap:8,background:T.inputBg,border:`1.5px solid ${expanded?ac.main:T.inputBorder}`,borderRadius:14,padding:"7px 11px",transition:"border-color 0.2s",boxShadow:expanded?`0 0 0 3px ${ac.main}18`:"none"}}>
-          <textarea
-            value={input}
-            onChange={e => { setInput(e.target.value); setExpanded(e.target.value.length > 0); }}
-            onFocus={() => setExpanded(true)}
-            onBlur={() => !input && setExpanded(false)}
-            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
-            placeholder={mode === "CRISIS" ? "ここにいます。話してください……" : `文字で話しかけてね、${profile.un || "あなた"}`}
-            rows={expanded ? 3 : 1}
-            style={{flex:1,background:"transparent",border:"none",color:T.aiText,fontSize:14,lineHeight:1.6,resize:"none",outline:"none",fontFamily:"'Helvetica Neue',Arial,sans-serif",transition:"all 0.2s"}}
-          />
-          <button onClick={() => sendMessage(input)} disabled={!input.trim() || loading} style={{width:32,height:32,borderRadius:9,border:"none",flexShrink:0,background:input.trim()&&!loading?ac.main:"#E2E8F0",color:input.trim()&&!loading?"#FFF":"#94A3B8",cursor:input.trim()&&!loading?"pointer":"not-allowed",fontSize:14,transition:"all 0.2s",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:input.trim()&&!loading?`0 2px 7px ${ac.main}40`:"none"}}>
-            ↑
-          </button>
+        <div style={{display:"flex",alignItems:"flex-end",gap:8}}>
+          {/* 設定ボタン — 常にチャット欄の左に表示 */}
+          <button
+            onClick={() => setShowSettings(true)}
+            style={{width:36,height:36,borderRadius:10,border:`1.5px solid ${ac.main}30`,background:ac.light,color:ac.main,cursor:"pointer",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.2s"}}
+            title="設定"
+          >⚙</button>
+          <div style={{flex:1,display:"flex",alignItems:"flex-end",gap:8,background:T.inputBg,border:`1.5px solid ${expanded?ac.main:T.inputBorder}`,borderRadius:14,padding:"7px 11px",transition:"border-color 0.2s",boxShadow:expanded?`0 0 0 3px ${ac.main}18`:"none"}}>
+            <textarea
+              value={input}
+              onChange={e => { setInput(e.target.value); setExpanded(e.target.value.length > 0); }}
+              onFocus={() => setExpanded(true)}
+              onBlur={() => !input && setExpanded(false)}
+              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
+              placeholder={mode === "CRISIS" ? "ここにいます。話してください……" : `文字で話しかけてね、${profile.un || "あなた"}`}
+              rows={expanded ? 3 : 1}
+              style={{flex:1,background:"transparent",border:"none",color:T.aiText,fontSize:14,lineHeight:1.6,resize:"none",outline:"none",fontFamily:"'Helvetica Neue',Arial,sans-serif",transition:"all 0.2s"}}
+            />
+            <button onClick={() => sendMessage(input)} disabled={!input.trim() || loading} style={{width:32,height:32,borderRadius:9,border:"none",flexShrink:0,background:input.trim()&&!loading?ac.main:"#E2E8F0",color:input.trim()&&!loading?"#FFF":"#94A3B8",cursor:input.trim()&&!loading?"pointer":"not-allowed",fontSize:14,transition:"all 0.2s",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:input.trim()&&!loading?`0 2px 7px ${ac.main}40`:"none"}}>
+              ↑
+            </button>
+          </div>
         </div>
         <div style={{textAlign:"center",marginTop:5,fontSize:10,color:T.subText}}>
           Enter送信 / Shift+Enter改行　•　「テーマを暗くして」等で設定変更できます
