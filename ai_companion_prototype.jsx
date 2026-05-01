@@ -256,6 +256,33 @@ function markWeeklyChallengeComplete() {
 
 const USER_TIER = { BYOK: "BYOK", HOST_FREE: "HOST_FREE", SUPPORTER: "SUPPORTER" };
 
+// ─── 暗号化キーボルト（APIキー永続保存） ─────────────────────────────────────
+// 既存の encryptData / decryptData（AES-256-GCM + PBKDF2-SHA256 100,000回）を
+// 再利用し、ユーザー設定PINで暗号化したAPIキーをlocalStorageに保存する。
+// 平文キーはlocalStorageに書かれない。PINはどこにも保存されない。
+
+const API_KEY_VAULT_KEY = "aico_apiKeyVault";
+
+async function saveKeyVault(keys, pin) {
+  const blob = await encryptData(JSON.stringify(keys), pin);
+  localStorage.setItem(API_KEY_VAULT_KEY, blob);
+}
+
+async function loadKeyVault(pin) {
+  const blob = localStorage.getItem(API_KEY_VAULT_KEY);
+  if (!blob) return null;
+  const json = await decryptData(blob, pin); // 復号失敗時は例外を投げる
+  return JSON.parse(json);
+}
+
+function hasKeyVault() {
+  return !!localStorage.getItem(API_KEY_VAULT_KEY);
+}
+
+function clearKeyVault() {
+  localStorage.removeItem(API_KEY_VAULT_KEY);
+}
+
 const HOST_FREE_ENGINE = "gemini";
 const HOST_FREE_MODEL  = "gemini-2.0-flash";
 const SUPPORTER_ENGINE = "claude";
@@ -1459,6 +1486,166 @@ function ObPreviewStep({ obAns, onConfirm, onBack, onChangeCsOpt, onChangePemOpt
   );
 }
 
+// ━━━ 暗号化キーボルト UI ━━━
+
+// A: 初回保存モーダル — APISetupScreen保存後に表示
+function KeyVaultSaveModal({ keys, onSaved, onSkip }) {
+  const [pin,     setPin]     = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [saving,  setSaving]  = useState(false);
+  const [error,   setError]   = useState("");
+  const [showPin, setShowPin] = useState(false);
+
+  const handleSave = async () => {
+    if (pin.length < 4) { setError("PINは4文字以上で設定してください"); return; }
+    if (pin !== confirm) { setError("PINが一致しません"); return; }
+    setSaving(true);
+    setError("");
+    try {
+      await saveKeyVault(keys, pin);
+      onSaved();
+    } catch {
+      setError("保存に失敗しました。もう一度お試しください。");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.65)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#FFF",borderRadius:18,padding:24,maxWidth:320,width:"100%",boxShadow:"0 20px 50px rgba(0,0,0,0.25)"}}>
+        <div style={{fontSize:22,textAlign:"center",marginBottom:10}}>🔐</div>
+        <div style={{fontSize:15,fontWeight:700,color:"#1E293B",textAlign:"center",marginBottom:6}}>APIキーを保存しますか？</div>
+        <div style={{fontSize:12,color:"#64748B",lineHeight:1.8,textAlign:"center",marginBottom:18}}>
+          PINで暗号化して保存します。<br/>次回から自動入力できます。
+        </div>
+
+        <div style={{marginBottom:10}}>
+          <div style={{fontSize:11,fontWeight:600,color:"#64748B",marginBottom:5}}>保管PIN（4文字以上）</div>
+          <div style={{position:"relative"}}>
+            <input
+              type={showPin ? "text" : "password"}
+              value={pin}
+              onChange={e => { setPin(e.target.value); setError(""); }}
+              placeholder="PIN を入力"
+              autoFocus
+              style={{width:"100%",padding:"10px 40px 10px 12px",borderRadius:10,border:`1.5px solid ${error?"#FCA5A5":"#E2E8F0"}`,fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"monospace"}}
+            />
+            <button onClick={() => setShowPin(p => !p)} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:"#94A3B8",fontSize:14}}>
+              {showPin ? "🙈" : "👁"}
+            </button>
+          </div>
+        </div>
+
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:11,fontWeight:600,color:"#64748B",marginBottom:5}}>PINの確認</div>
+          <input
+            type="password"
+            value={confirm}
+            onChange={e => { setConfirm(e.target.value); setError(""); }}
+            onKeyDown={e => e.key === "Enter" && handleSave()}
+            placeholder="もう一度入力"
+            style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${error?"#FCA5A5":"#E2E8F0"}`,fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"monospace"}}
+          />
+        </div>
+
+        {error && <div style={{fontSize:12,color:"#DC2626",marginBottom:10,textAlign:"center"}}>{error}</div>}
+
+        <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:9,padding:"8px 12px",marginBottom:16,fontSize:11,color:"#92400E",lineHeight:1.6}}>
+          ⚠️ PINを忘れると保存したキーを復元できません。忘れた場合はキーを再入力してください。
+        </div>
+
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <button
+            onClick={handleSave}
+            disabled={saving || pin.length < 4}
+            style={{padding:"11px 0",borderRadius:11,border:"none",background:pin.length >= 4?"#6366F1":"#E2E8F0",color:pin.length >= 4?"#FFF":"#94A3B8",fontWeight:700,fontSize:13,cursor:pin.length >= 4?"pointer":"not-allowed",boxShadow:pin.length >= 4?"0 3px 10px rgba(99,102,241,0.3)":"none"}}>
+            {saving ? "保存中…" : "暗号化して保存する"}
+          </button>
+          <button onClick={onSkip} style={{padding:"10px 0",borderRadius:11,border:"1.5px solid #E2E8F0",background:"#FFF",color:"#64748B",fontSize:13,cursor:"pointer"}}>
+            スキップ（毎回入力する）
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// B: 解錠モーダル — アプリ起動時・vault存在する場合に表示
+function KeyVaultUnlockModal({ onUnlocked, onSkip, onClear }) {
+  const [pin,       setPin]       = useState("");
+  const [unlocking, setUnlocking] = useState(false);
+  const [error,     setError]     = useState("");
+  const [showPin,   setShowPin]   = useState(false);
+
+  const handleUnlock = async () => {
+    if (!pin) return;
+    setUnlocking(true);
+    setError("");
+    try {
+      const keys = await loadKeyVault(pin);
+      if (!keys) { setError("保存データが見つかりません"); setUnlocking(false); return; }
+      onUnlocked(keys);
+    } catch {
+      setError("PINが違います");
+    } finally { setUnlocking(false); }
+  };
+
+  const handleClear = () => {
+    if (window.confirm("保存されたAPIキーを削除します。この操作は取り消せません。")) {
+      clearKeyVault();
+      onClear();
+    }
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.65)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#FFF",borderRadius:18,padding:24,maxWidth:320,width:"100%",boxShadow:"0 20px 50px rgba(0,0,0,0.25)"}}>
+        <div style={{fontSize:22,textAlign:"center",marginBottom:10}}>🔐</div>
+        <div style={{fontSize:15,fontWeight:700,color:"#1E293B",textAlign:"center",marginBottom:6}}>APIキーが保存されています</div>
+        <div style={{fontSize:12,color:"#64748B",lineHeight:1.8,textAlign:"center",marginBottom:18}}>
+          PINを入力してAPIキーを復元してください。
+        </div>
+
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:11,fontWeight:600,color:"#64748B",marginBottom:5}}>保管PIN</div>
+          <div style={{display:"flex",gap:8}}>
+            <div style={{position:"relative",flex:1}}>
+              <input
+                type={showPin ? "text" : "password"}
+                value={pin}
+                onChange={e => { setPin(e.target.value); setError(""); }}
+                onKeyDown={e => e.key === "Enter" && handleUnlock()}
+                placeholder="PINを入力"
+                autoFocus
+                style={{width:"100%",padding:"10px 40px 10px 12px",borderRadius:10,border:`1.5px solid ${error?"#FCA5A5":"#E2E8F0"}`,fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"monospace"}}
+              />
+              <button onClick={() => setShowPin(p => !p)} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:"#94A3B8",fontSize:14}}>
+                {showPin ? "🙈" : "👁"}
+              </button>
+            </div>
+            <button
+              onClick={handleUnlock}
+              disabled={!pin || unlocking}
+              style={{padding:"10px 16px",borderRadius:10,border:"none",background:pin?"#6366F1":"#E2E8F0",color:pin?"#FFF":"#94A3B8",fontWeight:700,fontSize:13,cursor:pin?"pointer":"not-allowed",flexShrink:0,boxShadow:pin?"0 2px 7px rgba(99,102,241,0.3)":"none"}}>
+              {unlocking ? "…" : "復元"}
+            </button>
+          </div>
+        </div>
+
+        {error && <div style={{fontSize:12,color:"#DC2626",marginBottom:12,textAlign:"center"}}>{error}</div>}
+
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <button onClick={onSkip} style={{padding:"10px 0",borderRadius:11,border:"1.5px solid #E2E8F0",background:"#FFF",color:"#475569",fontSize:13,cursor:"pointer"}}>
+            スキップ（手動でAPIキーを入力する）
+          </button>
+          <button onClick={handleClear} style={{padding:"8px 0",background:"none",border:"none",color:"#EF4444",fontSize:12,cursor:"pointer"}}>
+            保存済みAPIキーを削除する
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ━━━ プラン選択画面（提案6: PlanSelectionScreen） ━━━
 
 function PlanSelectionScreen({ onSelectBYOK, onSelectHostFree, onSelectSupporter }) {
@@ -1621,6 +1808,8 @@ function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
   const [testResult,       setTestResult]       = useState({});
   const [llamaEndpoint,    setLlamaEndpoint]    = useState(apiConfig.llamaEndpoint    || "http://localhost:8080");
   const [llamaCustomModel, setLlamaCustomModel] = useState(apiConfig.llamaCustomModel || "");
+  const [showVaultSaveModal, setShowVaultSaveModal] = useState(false);
+  const [pendingKeys,        setPendingKeys]        = useState(null);
 
   const hasAnyKey = AI_ENGINES.some(e => e.noKey || (keys[e.id] && keys[e.id].trim().length > 8));
   const eng = AI_ENGINES.find(e => e.id === selectedEngine);
@@ -1666,7 +1855,8 @@ function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
     }
     const main = validEngines.find(e => e.id === mainEngine) || validEngines[0];
     setApiConfig({ mainEngine: main.id, keys, models, llamaEndpoint, llamaCustomModel, configured: true });
-    onComplete();
+    setPendingKeys(keys);
+    setShowVaultSaveModal(true);
   };
 
   return (
@@ -1832,6 +2022,13 @@ function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
         </button>
         <div style={{textAlign:"center",fontSize:11,color:"#94A3B8",marginBottom:16}}>後からいつでも ⚙ボタン で変更できます</div>
       </div>
+      {showVaultSaveModal && pendingKeys && (
+        <KeyVaultSaveModal
+          keys={pendingKeys}
+          onSaved={() => { setShowVaultSaveModal(false); onComplete(); }}
+          onSkip={() => { setShowVaultSaveModal(false); onComplete(); }}
+        />
+      )}
     </div>
   );
 }
@@ -2214,6 +2411,9 @@ function SettingsPanel({ S, setS, apiConfig, companion, profile, msgs, onClose, 
   const ac = ACCENTS[S.accent] || ACCENTS.blue;
   const toggle = k => setS(p => ({...p,[k]:!p[k]}));
   const mainEng = AI_ENGINES.find(e => e.id === apiConfig.mainEngine) || AI_ENGINES[0];
+  const [vaultExists,    setVaultExists]    = useState(() => hasKeyVault());
+  const [showVaultSave,  setShowVaultSave]  = useState(false);
+  const [vaultCleared,   setVaultCleared]   = useState(false);
 
   return (
     <div style={{position:"absolute",inset:0,background:"rgba(15,23,42,0.55)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:12}}>
@@ -2243,6 +2443,32 @@ function SettingsPanel({ S, setS, apiConfig, companion, profile, msgs, onClose, 
                 </div>
               );
             })}
+          </div>
+
+          {/* APIキー保存ボルト管理 */}
+          <div style={{marginTop:10,padding:"10px 12px",borderRadius:10,background:"#F8FAFC",border:"1px solid #E2E8F0"}}>
+            <div style={{fontSize:11,fontWeight:600,color:"#475569",marginBottom:7}}>APIキー保存（PIN暗号化）</div>
+            {(vaultExists && !vaultCleared) ? (
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:11,color:"#065F46",flex:1}}>保存済み</span>
+                <button
+                  onClick={() => { clearKeyVault(); setVaultExists(false); setVaultCleared(true); }}
+                  style={{padding:"4px 10px",borderRadius:7,border:"1.5px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontWeight:600,fontSize:11,cursor:"pointer"}}
+                >
+                  削除する
+                </button>
+              </div>
+            ) : (
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:11,color:"#94A3B8",flex:1}}>保存されていません</span>
+                <button
+                  onClick={() => setShowVaultSave(true)}
+                  style={{padding:"4px 10px",borderRadius:7,border:"1.5px solid #BFDBFE",background:"#EFF6FF",color:"#2563EB",fontWeight:600,fontSize:11,cursor:"pointer"}}
+                >
+                  保存する
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -2414,6 +2640,13 @@ function SettingsPanel({ S, setS, apiConfig, companion, profile, msgs, onClose, 
           ac={ac}
         />
       </div>
+      {showVaultSave && (
+        <KeyVaultSaveModal
+          keys={apiConfig.keys || {}}
+          onSaved={() => { setShowVaultSave(false); setVaultExists(true); setVaultCleared(false); }}
+          onSkip={() => setShowVaultSave(false)}
+        />
+      )}
     </div>
   );
 }
@@ -2482,9 +2715,10 @@ export default function AICompanionApp() {
   const [hotlineDismissed, setHotlineDismissed] = useState(false); // MODERATE/HIGHのみ閉じられる
   const [miAsked, setMiAsked] = useState(false); // CRITICALでMI問いかけ済みか
   const [expanded,     setExpanded]     = useState(false);
-  const [showSettings,   setShowSettings]   = useState(false);
-  const [showAPISetup,   setShowAPISetup]   = useState(false);
-  const [showErrorLog,   setShowErrorLog]   = useState(false);
+  const [showSettings,        setShowSettings]        = useState(false);
+  const [showAPISetup,        setShowAPISetup]        = useState(false);
+  const [showErrorLog,        setShowErrorLog]        = useState(false);
+  const [vaultUnlockDismissed, setVaultUnlockDismissed] = useState(false);
   const [toastEntry,     setToastEntry]     = useState(null);
   const [convCount,      setConvCount]      = useState(() => lsGet("convCount", 0));
   const [backupReminder, setBackupReminder] = useState(false);
@@ -3035,6 +3269,19 @@ export default function AICompanionApp() {
   // APIセットアップ画面
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   if (phase === "api_setup" || showAPISetup) {
+    // 初回セットアップ時にvaultが存在すれば解錠モーダルを先に表示
+    if (!showAPISetup && !vaultUnlockDismissed && hasKeyVault()) {
+      return (
+        <KeyVaultUnlockModal
+          onUnlocked={(restoredKeys) => {
+            setApiConfig(prev => ({ ...prev, keys: restoredKeys, configured: true }));
+            setPhase("onboarding");
+          }}
+          onSkip={() => setVaultUnlockDismissed(true)}
+          onClear={() => { clearKeyVault(); setVaultUnlockDismissed(true); }}
+        />
+      );
+    }
     return (
       <div style={{height:showAPISetup?"580px":"100vh",display:"flex",flexDirection:"column",overflow:"hidden"}}>
         {showAPISetup && (
