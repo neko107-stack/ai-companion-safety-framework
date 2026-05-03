@@ -598,7 +598,13 @@ async function encryptData(plaintext, password) {
   const ct   = await crypto.subtle.encrypt({name:"AES-GCM",iv}, key, new TextEncoder().encode(plaintext));
   const buf  = new Uint8Array(28 + ct.byteLength);
   buf.set(salt,0); buf.set(iv,16); buf.set(new Uint8Array(ct),28);
-  return btoa(String.fromCharCode(...buf));
+  // チャンク処理：大きいバッファを一度にspreadするとコールスタックを超えるため8KB単位で処理
+  let binary = "";
+  const chunk = 8192;
+  for (let i = 0; i < buf.length; i += chunk) {
+    binary += String.fromCharCode(...buf.subarray(i, i + chunk));
+  }
+  return btoa(binary);
 }
 async function decryptData(b64, password) {
   const buf  = Uint8Array.from(atob(b64), c=>c.charCodeAt(0));
