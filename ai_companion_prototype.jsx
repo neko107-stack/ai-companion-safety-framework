@@ -2725,6 +2725,7 @@ export default function AICompanionApp() {
   const [showAPISetup,        setShowAPISetup]        = useState(false);
   const [showErrorLog,        setShowErrorLog]        = useState(false);
   const [vaultUnlockDismissed, setVaultUnlockDismissed] = useState(false);
+  const [showStartupVaultUnlock, setShowStartupVaultUnlock] = useState(false);
   const [toastEntry,     setToastEntry]     = useState(null);
   const [convCount,      setConvCount]      = useState(() => lsGet("convCount", 0));
   const [backupReminder, setBackupReminder] = useState(false);
@@ -2762,6 +2763,14 @@ export default function AICompanionApp() {
     setUserTier(USER_TIER.SUPPORTER);
     try { localStorage.setItem(SUPPORTER_TOKEN_KEY, token); } catch {}
   };
+
+  // アプリ起動時：Vaultが存在しsessionStorageにキーがなければ解錠モーダルを表示
+  useEffect(() => {
+    if (hasKeyVault() && Object.keys(ssGet("apiKeys", {})).length === 0) {
+      setShowStartupVaultUnlock(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Stripe リダイレクト戻り処理（?supporter_session=xxx）
   useEffect(() => {
@@ -3117,6 +3126,22 @@ export default function AICompanionApp() {
   };
   const ind    = getIndicator();
   const modeAc = mode === "CRISIS" ? "#EF4444" : mode === "WATCHFUL" ? "#3B82F6" : ac.main;
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 起動時 Vault 解錠（sessionStorageにキーがない場合）
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if (showStartupVaultUnlock) {
+    return (
+      <KeyVaultUnlockModal
+        onUnlocked={(restoredKeys) => {
+          setApiConfig(prev => ({ ...prev, keys: restoredKeys, configured: true }));
+          setShowStartupVaultUnlock(false);
+        }}
+        onSkip={() => setShowStartupVaultUnlock(false)}
+        onClear={() => { clearKeyVault(); setShowStartupVaultUnlock(false); }}
+      />
+    );
+  }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // ウェルカム画面
