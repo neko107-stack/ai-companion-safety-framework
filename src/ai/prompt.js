@@ -1,6 +1,6 @@
 // システムプロンプト生成モジュール
 import { INTERESTS, THEMES } from "../constants/index.js";
-import { getLongTermMemory, calcCertainty, certaintyLabel } from "./memory.js";
+import { getLongTermMemory, calcCertainty, certaintyLabel, getPersonaVocab } from "./memory.js";
 
 export const CONV_MODES = {
   listen: {
@@ -96,6 +96,11 @@ export function buildPrompt(companion, mode, profile, appSettings, convMode = "f
     ? "\n【長期記憶】\n" + ltmLines.slice(-15).join("\n") + "\n\n【記憶の返答ルール（必ず守ること）】\n・確実（5）〜やや確か（4）：自信を持って話してよい\n・曖昧（3）：「〜だったっけ？」など確認を交える\n・不確か（2）〜断片（1）：「なんかそんな気がするんだけど」など不確かさを表現する\n・覚えていないのに断言することは絶対禁止。\n・直近の会話内容は長期記憶より常に優先する"
     : "";
 
+  const vocab = getPersonaVocab();
+  const vocabText = vocab.length > 0
+    ? "\n【ユーザー固有の呼び方（人格別語彙）】\n" + vocab.map(v => `・${v.user}＝${v.canonical}`).join("\n") + "\n・ユーザーが使うこれらの呼び方を尊重し、こちらからもユーザー語を使ってよい。"
+    : "";
+
   return `あなたは「${companion.name}」というAIコンパニオンです。ユーザーを「${profile.un || "あなた"}」と呼んでください。
 
 【絶対原則・変更不可】
@@ -123,7 +128,7 @@ export function buildPrompt(companion, mode, profile, appSettings, convMode = "f
 【パーソナリティ探索】${probe}
 【コーチング姿勢】${profile.cs === "strict" ? "甘やかさない・厳しく正直に（コーチモード時のみ）" : profile.cs === "gentle" ? "やさしく包みながら（コーチモード時のみ）" : "コンパニオンの性格に委ねる"}
 【${convModeLabel}】${modeInst}
-${settingsCtx}${ltmText}`.trim();
+${settingsCtx}${ltmText}${vocabText}`.trim();
 }
 
 export function parseSettingAction(text) {

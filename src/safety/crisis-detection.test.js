@@ -15,6 +15,8 @@ import {
   emotionalStateToCrisisLevel,
   detectCrisisFull,
   detectLongitudinalChange,
+  detectIdeationDimensions,
+  detectCrisisL5,
 } from "./crisis-detection.js";
 
 describe("detectCrisis — CRITICAL レベル", () => {
@@ -230,4 +232,108 @@ describe("detectLongitudinalChange — ウェルビーイングトレンド", ()
     });
   test("undefinedでもエラーにならない",
     () => expect(() => detectLongitudinalChange(undefined)).not.toThrow());
+});
+
+describe("Layer 5 — detectIdeationDimensions", () => {
+  test("CRITICAL 表現で intent=2", () => {
+    const d = detectIdeationDimensions("もう死にたい");
+    expect(d.intent).toBe(2);
+  });
+  test("HIGH 表現で intent=1", () => {
+    const d = detectIdeationDimensions("自分を傷つけたい");
+    expect(d.intent).toBe(1);
+  });
+  test("通常会話で intent=0", () => {
+    const d = detectIdeationDimensions("今日は天気がいい");
+    expect(d.intent).toBe(0);
+  });
+  test("計画パターンで plan=1〜2", () => {
+    const d = detectIdeationDimensions("具体的な方法を考えた");
+    expect(d.plan).toBeGreaterThanOrEqual(1);
+  });
+  test("準備パターンで preparedness=1〜2", () => {
+    const d = detectIdeationDimensions("遺書を書いた");
+    expect(d.preparedness).toBeGreaterThanOrEqual(1);
+  });
+  test("access パターンで access=1〜2", () => {
+    const d = detectIdeationDimensions("薬が手元にある");
+    expect(d.access).toBeGreaterThanOrEqual(1);
+  });
+  test("crisisHistory が空なら history=0", () => {
+    const d = detectIdeationDimensions("つらい", { crisisHistory: [] });
+    expect(d.history).toBe(0);
+  });
+  test("過去 CRITICAL 1 件で history=1", () => {
+    const d = detectIdeationDimensions("つらい", { crisisHistory: ["CRITICAL"] });
+    expect(d.history).toBe(1);
+  });
+  test("過去 HIGH/CRITICAL 3 件以上で history=2", () => {
+    const d = detectIdeationDimensions("つらい", {
+      crisisHistory: ["CRITICAL", "HIGH", "CRITICAL", "MILD"],
+    });
+    expect(d.history).toBe(2);
+  });
+});
+
+describe("Layer 5 — detectCrisisL5 シナリオ", () => {
+  test("intent 単体（その他なし）→ Layer 1 由来で CRITICAL（既存挙動維持）", () => {
+    // 死にたい は detectCrisis で CRITICAL なので detectCrisisFull も CRITICAL
+    // L5 単体スコア=2 → MODERATE だが、Full との max で CRITICAL
+    const r = detectCrisisL5("死にたい");
+    expect(r.level).toBe("CRITICAL");
+    expect(r.dimensions.intent).toBe(2);
+  });
+
+  test("intent + plan → HIGH 以上に上がる", () => {
+    const r = detectCrisisL5("死にたい。具体的な方法を考えた");
+    expect(["HIGH", "CRITICAL"]).toContain(r.level);
+    expect(r.score).toBeGreaterThanOrEqual(4);
+  });
+
+  test("intent + plan + preparedness + access → CRITICAL（合計≥6）", () => {
+    const r = detectCrisisL5(
+      "死にたい。具体的な方法を考えた。遺書を書いた。薬が手元にある"
+    );
+    expect(r.level).toBe("CRITICAL");
+    expect(r.score).toBeGreaterThanOrEqual(6);
+  });
+
+  test("plan 単体（intent なし）は MILD で天井 — 誤陽性しない", () => {
+    // 「具体的な方法を考えた」だけ。intent=0 なので MILD でキャップ
+    const r = detectCrisisL5("仕事の具体的な方法を考えた");
+    expect(r.dimensions.intent).toBe(0);
+    // L5 はキャップで MILD 以下、Full（detectCrisisFull）も NONE のはず
+    expect(["NONE", "MILD"]).toContain(r.level);
+  });
+
+  test("preparedness 単体（intent なし）も天井で抑制", () => {
+    const r = detectCrisisL5("引っ越しで身辺を整理した");
+    // 「身辺を整理した」が PREPARATION_PATTERNS にマッチする可能性あり
+    expect(r.dimensions.intent).toBe(0);
+    expect(["NONE", "MILD"]).toContain(r.level);
+  });
+
+  test("通常会話 → NONE", () => {
+    const r = detectCrisisL5("今日は天気がいい");
+    expect(r.level).toBe("NONE");
+    expect(r.score).toBe(0);
+  });
+
+  test("crisisHistory が積まれるとレベル底上げ", () => {
+    const r = detectCrisisL5("自分を傷つけたい", {
+      crisisHistory: ["CRITICAL", "HIGH", "CRITICAL"],
+    });
+    // intent=1 + history=2 = 3 → MODERATE 以上
+    expect(["MODERATE", "HIGH", "CRITICAL"]).toContain(r.level);
+  });
+
+  test("dimensions と score が返る", () => {
+    const r = detectCrisisL5("死にたい");
+    expect(r.dimensions).toHaveProperty("intent");
+    expect(r.dimensions).toHaveProperty("plan");
+    expect(r.dimensions).toHaveProperty("preparedness");
+    expect(r.dimensions).toHaveProperty("access");
+    expect(r.dimensions).toHaveProperty("history");
+    expect(typeof r.score).toBe("number");
+  });
 });

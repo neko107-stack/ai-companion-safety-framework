@@ -1,10 +1,14 @@
 // AIエンジン呼び出しモジュール（ユーザーのAPIキーを使用）
 import { ERR, classifyApiError, recordLog } from "../utils/logger.js";
+import { resolveModel, recordModelTransition } from "./model-registry.js";
 
 export const maskKey = k => k ? k.slice(0, 8) + "••••••••••" + k.slice(-4) : "";
 
-export async function callAI(engineId, model, apiKey, systemPrompt, messages, phase = "chat") {
-  const ctx = { engine: engineId, model };
+export async function callAI(engineId, requestedModel, apiKey, systemPrompt, messages, phase = "chat") {
+  const resolved = resolveModel(requestedModel);
+  if (resolved.replaced) recordModelTransition(requestedModel, resolved.id, phase);
+  const model = resolved.id;
+  const ctx = { engine: engineId, model, requestedModel };
 
   if (engineId === "claude") {
     let res, d;

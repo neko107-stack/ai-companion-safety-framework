@@ -4,7 +4,8 @@
 // Layer 2: ✅ Phase 2実装済み — CBT認知パターン分析（Beck, 1979）
 // Layer 3: ✅ Phase 2実装済み — DBT感情状態モデリング（Linehan, 1993）
 // Layer 4: 部分実装（縦断的変化検知）— Phase 2強化
-// Layer 0, 5: Phase 3以降実装予定
+// Layer 5: ✅ Phase 3実装済み — 総合C-SSRSリスクスコアリング
+// Layer 0: Phase 3以降実装予定（音声信号分析）
 
 // ─── Layer 1: 言語的危機シグナル検知（C-SSRS準拠） ───────────────────────────
 
@@ -245,4 +246,92 @@ export function detectLongitudinalChange(wellbeingHistory) {
   const riskBoost = trend === "declining" && lastTwo.every(s => s <= -1);
 
   return { trend, riskBoost };
+}
+
+// ─── Layer 5: 総合C-SSRSリスクスコアリング ─────────────────────────────────────
+// C-SSRS の項目 3〜6 に対応する 5 次元（intent / plan / preparedness / access / history）
+// を 0〜2 で評価し、合算スコアと Layer 1〜3 結果の最大値で危機レベルを返す。
+// intent=0 のときは plan/preparedness/access が揃っても誤陽性しないよう MILD で天井する。
+
+/** 計画性パターン — 具体的な方法・場所・時間の言及 */
+export const PLAN_PATTERNS = [
+  /(具体的な|はっきりした)方法/,
+  /(どこで|何時に|いつ)(やる|決行|する)/,
+  /(方法|手段)(を|は)(決めた|考えた|思いついた)/,
+  /(明日|今夜|今日中|週末)(に|までに)(やる|決行)/,
+];
+
+/** 準備行動パターン — 道具入手・遺書執筆など */
+export const PREPARATION_PATTERNS = [
+  /遺書(を書|書いた|を準備)/,
+  /(道具|薬|ロープ)(を|が|は)(買った|用意した|準備した|集めた)/,
+  /(身辺|身の回り)(を|の)(整理|片付け)(した|している|始めた)/,
+  /(大切な|大事な)(物|もの|人)(を|に)(渡した|手放した)/,
+];
+
+/** 手段への access — 危険物が手元にある状態の言及 */
+export const ACCESS_PATTERNS = [
+  /(薬|ロープ|刃物|包丁)(が|は)(手元|そば|目の前)(に)?(ある|そろってる)/,
+  /(高い場所|屋上|ホーム)(に|へ)(行く|向かう|来てる)/,
+  /(銃|武器)(を|が)(持っている|手に入れた)/,
+];
+
+/**
+ * Layer 5: C-SSRS 5 次元の評価
+ * @param {string} text
+ * @param {{ crisisHistory?: Array<"CRITICAL"|"HIGH"|"MODERATE"|"MILD"|"NONE"> }} [options]
+ *   crisisHistory: 直近セッションで観測した危機レベル列（過去履歴次元の素材）
+ * @returns {{ intent:number, plan:number, preparedness:number, access:number, history:number }}
+ */
+export function detectIdeationDimensions(text, options = {}) {
+  const t = text || "";
+  // intent: CRITICAL マッチで 2、HIGH マッチで 1
+  let intent = 0;
+  if (CRISIS_PATTERNS.critical.some(p => p.test(t))) intent = 2;
+  else if (CRISIS_PATTERNS.high.some(p => p.test(t))) intent = 1;
+
+  const countMatches = (patterns) => Math.min(2, patterns.filter(p => p.test(t)).length);
+  const plan         = countMatches(PLAN_PATTERNS);
+  const preparedness = countMatches(PREPARATION_PATTERNS);
+  const access       = countMatches(ACCESS_PATTERNS);
+
+  // history: 直近の危機履歴 — CRITICAL/HIGH の出現回数で 0〜2
+  const hist = options.crisisHistory || [];
+  const recentSerious = hist.slice(-10).filter(l => l === "CRITICAL" || l === "HIGH").length;
+  let history = 0;
+  if (recentSerious >= 3) history = 2;
+  else if (recentSerious >= 1) history = 1;
+
+  return { intent, plan, preparedness, access, history };
+}
+
+const CRISIS_LEVELS = ["NONE", "MILD", "MODERATE", "HIGH", "CRITICAL"];
+
+/**
+ * Layer 5 総合スコアリング: detectCrisisFull と L5 由来バンドの最大値を返す
+ * @param {string} text
+ * @param {{ crisisHistory?: Array }} [options]
+ * @returns {{ level:"CRITICAL"|"HIGH"|"MODERATE"|"MILD"|"NONE", score:number, dimensions:object }}
+ */
+export function detectCrisisL5(text, options = {}) {
+  const dims = detectIdeationDimensions(text, options);
+  const score = dims.intent + dims.plan + dims.preparedness + dims.access + dims.history;
+
+  let l5Level;
+  if (score >= 6) l5Level = "CRITICAL";
+  else if (score >= 4) l5Level = "HIGH";
+  else if (score >= 2) l5Level = "MODERATE";
+  else if (score >= 1) l5Level = "MILD";
+  else l5Level = "NONE";
+
+  // intent=0 のときは plan/preparedness/access が積まれても MILD で天井（誤陽性防止）
+  if (dims.intent === 0) {
+    const capIdx = CRISIS_LEVELS.indexOf("MILD");
+    const curIdx = CRISIS_LEVELS.indexOf(l5Level);
+    if (curIdx > capIdx) l5Level = "MILD";
+  }
+
+  const fullLevel = detectCrisisFull(text);
+  const idx = Math.max(CRISIS_LEVELS.indexOf(fullLevel), CRISIS_LEVELS.indexOf(l5Level));
+  return { level: CRISIS_LEVELS[idx], score, dimensions: dims };
 }

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, createElement } from "react";
+import { detectCrisisL5 } from "./src/safety/crisis-detection.js";
 
 // ━━━ 定数 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -2923,7 +2924,12 @@ export default function AICompanionApp() {
     setMsgs(p => [...p, { id:Date.now(), role:"user", text:text.trim() }]);
     setInput(""); setExpanded(false); setLoading(true);
 
-    const crisisLevel = detectCrisisFull(text); // Layer 1+2+3 統合検知（Phase 2）
+    // Layer 1+2+3 (detectCrisisFull) と Layer 5 の最大値を取る
+    const crisisHistory = JSON.parse(sessionStorage.getItem("aico_crisisHistory") || "[]");
+    const l5 = detectCrisisL5(text, { crisisHistory });
+    const crisisLevel = l5.level;
+    const newHistory = [...crisisHistory, crisisLevel].slice(-10);
+    try { sessionStorage.setItem("aico_crisisHistory", JSON.stringify(newHistory)); } catch {}
     setCl(crisisLevel);
     let nm = mode;
     if (crisisLevel === "CRITICAL") {
