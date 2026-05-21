@@ -578,6 +578,111 @@ function clearLogs() {
   try { localStorage.removeItem(LOG_KEY); } catch {}
 }
 
+// ━━━ AI判断ログ（デバッグ用・リリース時に削除） ━━━━━━━━━━━━━
+// 目的: AIがどのような判断のもとに回答しているかを開発者が追えるようにする
+// 範囲: WEB版のみ・開発者本人のみ閲覧
+// リリース時の削除手順:
+//   1. このセクション全体（DEBUG_AI 〜 DEBUG_PROMPT_APPEND）を削除
+//   2. buildPrompt 内の DEBUG_AI 条件分岐を削除
+//   3. sendMessage 内の debugLog / debugFinalize / extractThinking 呼び出しを削除
+//   4. ErrorLogPanel 内のタブ切替・判断ログ表示部分を削除
+//   5. grep -rn "DEBUG_AI\|debugLog\|debugFinalize\|extractThinking\|getDebugLogs\|exportDebugLogs\|clearDebugLogs" で取りこぼし確認
+
+const DEBUG_AI       = true;            // false にすると全関数が no-op になり、プロンプト追記も停止
+const DEBUG_LOG_KEY  = "aico_debuglog";
+const DEBUG_LOG_MAX  = 100;
+
+// ターンID単位で各stageを一時バッファに溜め、debugFinalizeでまとめてlocalStorageへ書き込む
+const _debugBuffer = {};
+
+function debugLog(turnId, stage, data) {
+  if (!DEBUG_AI) return;
+  if (!_debugBuffer[turnId]) {
+    _debugBuffer[turnId] = {
+      id:    Math.random().toString(36).slice(2, 10),
+      ts:    new Date().toISOString(),
+      turn:  turnId,
+      stages: {},
+    };
+  }
+  _debugBuffer[turnId].stages[stage] = data;
+}
+
+function debugFinalize(turnId) {
+  if (!DEBUG_AI) return;
+  const entry = _debugBuffer[turnId];
+  if (!entry) return;
+  delete _debugBuffer[turnId];
+  try {
+    const raw  = localStorage.getItem(DEBUG_LOG_KEY);
+    const logs = raw ? JSON.parse(raw) : [];
+    logs.push(entry);
+    if (logs.length > DEBUG_LOG_MAX) logs.splice(0, logs.length - DEBUG_LOG_MAX);
+    localStorage.setItem(DEBUG_LOG_KEY, JSON.stringify(logs));
+  } catch {}
+}
+
+function getDebugLogs() {
+  try {
+    const raw = localStorage.getItem(DEBUG_LOG_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function exportDebugLogs() {
+  return JSON.stringify({ exportedAt: new Date().toISOString(), version: APP_VERSION, logs: getDebugLogs() }, null, 2);
+}
+
+function clearDebugLogs() {
+  try { localStorage.removeItem(DEBUG_LOG_KEY); } catch {}
+}
+
+// AI応答テキストから <thinking>...</thinking> と <response>...</response> を分離する
+// タグが見つからない場合は thinking=null, response=元のテキスト（フォールバック）
+function extractThinking(text) {
+  if (!text || typeof text !== "string") return { thinking: null, response: text || "" };
+  const thinkMatch = text.match(/<thinking>([\s\S]*?)<\/thinking>/);
+  const respMatch  = text.match(/<response>([\s\S]*?)<\/response>/);
+  const thinking = thinkMatch ? thinkMatch[1].trim() : null;
+  let response;
+  if (respMatch) {
+    response = respMatch[1].trim();
+  } else if (thinkMatch) {
+    // <thinking> はあるが <response> タグがない → thinking 部分を除去した残りを返答とみなす
+    response = text.replace(/<thinking>[\s\S]*?<\/thinking>/, "").trim();
+  } else {
+    response = text;
+  }
+  return { thinking, response };
+}
+
+// buildPrompt の末尾に追加するデバッグ指示ブロック
+// 「返答内容は通常時と同一であること」を強く明示し、思考の有無が応答に影響しないようにする
+const DEBUG_PROMPT_APPEND = `
+
+【デバッグモード：思考過程の出力（重要）】
+返答する前に、必ず以下の形式で思考過程を出力してください。
+
+<thinking>
+1. ユーザー発言の解釈：何を感じているか／何を伝えようとしているか
+2. 適用される安全性モード（CRISIS/WATCHFUL/NORMAL）と、それが要求する優先事項
+3. 選択する会話モード（listen/friend/think/coach）と、その理由
+4. 参照する長期記憶：どの項目を使うか／使わないか／なぜか
+5. 守るべき制約：質問の個数、自己開示の有無、橋渡し促進の可否、設定アクション要否
+6. 返答の方針：トーン・長さ・含める要素／含めない要素
+</thinking>
+<response>
+（ユーザーへの実際の返答のみをここに書く）
+</response>
+
+【絶対遵守ルール】
+・<response> の中身は、デバッグモードでない通常時とまったく同じ内容・文体・長さでなければならない。
+・<thinking> を書いたことを理由に返答を要約したり、説明的にしたり、変えてはならない。
+・<response> 内に思考、前置き、メタ的な発言（「では返答します」等）を入れない。
+・<thinking> には「返答の下書き」ではなく、判断の根拠と方針のみを書く。返答の文面を先に書かない。
+・設定変更アクション {"action":"set_setting",...} が必要なときは <response> 内に通常通り含める。
+・タグの綴り・順序を厳守する。<thinking> の前に何も書かない。`;
+
 // ━━━ 暗号化ユーティリティ（Web Crypto API） ━━━
 // AES-256-GCM + PBKDF2-SHA256（100,000回）
 // ※ NIST SP 800-132（2023）はSHA-256で最低600,000回を推奨。
@@ -1327,7 +1432,7 @@ function buildPrompt(companion, mode, profile, appSettings, convMode = "friend")
 【パーソナリティ探索】${probe}
 【コーチング姿勢】${profile.cs === "strict" ? "甘やかさない・厳しく正直に（コーチモード時のみ）" : profile.cs === "gentle" ? "やさしく包みながら（コーチモード時のみ）" : "コンパニオンの性格に委ねる"}
 【${convModeLabel}】${modeInst}
-${settingsCtx}${ltmText}`.trim();
+${settingsCtx}${ltmText}`.trim() + (DEBUG_AI ? DEBUG_PROMPT_APPEND : "");
 }
 
 function parseSettingAction(text) {
@@ -2042,69 +2147,172 @@ function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
 // ━━━ エラーログパネル ━━━
 
 function ErrorLogPanel({ onClose }) {
+  // 【デバッグ】DEBUG_AI=true のとき判断ログタブを出す。リリース時は activeTab・debugLogs・関連JSXを削除すること
+  const [activeTab, setActiveTab] = useState("error");
   const [logs, setLogs] = useState(() => getLogs().reverse()); // 新しい順
+  const [debugLogs, setDebugLogs] = useState(() => DEBUG_AI ? getDebugLogs().reverse() : []);
   const [filter, setFilter] = useState("all");
+  const [expanded, setExpanded] = useState({}); // 判断ログの折りたたみ状態
 
   const filtered = filter === "all" ? logs : logs.filter(l => l.category === filter);
   const catColors = { api:"#EF4444", storage:"#F59E0B", crypto:"#8B5CF6", crisis:"#3B82F6", ui:"#64748B" };
   const catLabels = { api:"API", storage:"ストレージ", crypto:"暗号化", crisis:"危機検知", ui:"UI" };
 
+  const isDebugTab = DEBUG_AI && activeTab === "debug";
+
   const handleExportLogs = () => {
     try {
-      const json = exportLogs();
+      const json = isDebugTab ? exportDebugLogs() : exportLogs();
       const blob = new Blob([json], { type: "application/json" });
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement("a");
-      a.href = url; a.download = `aico_logs_${new Date().toISOString().slice(0,10)}.json`; a.click();
+      a.href = url;
+      a.download = `aico_${isDebugTab ? "debug" : "logs"}_${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
       URL.revokeObjectURL(url);
     } catch(e) { alert("ログのエクスポートに失敗しました: " + e.message); }
   };
 
-  const handleClear = () => { clearLogs(); setLogs([]); };
+  const handleClear = () => {
+    if (isDebugTab) { clearDebugLogs(); setDebugLogs([]); setExpanded({}); }
+    else            { clearLogs();      setLogs([]); }
+  };
+
+  const toggleExpand = (id) => setExpanded(p => ({ ...p, [id]: !p[id] }));
+
+  // 判断ログのモードに応じた色
+  const modeColors = { CRISIS:"#DC2626", WATCHFUL:"#F59E0B", NORMAL:"#10B981" };
 
   return (
     <div style={{position:"absolute",inset:0,background:"rgba(15,23,42,0.6)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:10}}>
       <div style={{background:"#FFF",borderRadius:18,padding:18,width:"100%",maxWidth:370,maxHeight:"92%",display:"flex",flexDirection:"column",boxShadow:"0 20px 50px rgba(0,0,0,0.25)"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexShrink:0}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexShrink:0}}>
           <div>
-            <span style={{fontSize:15,fontWeight:700,color:"#1E293B"}}>エラーログ</span>
-            <span style={{fontSize:11,color:"#94A3B8",marginLeft:8}}>{logs.length}件</span>
+            <span style={{fontSize:15,fontWeight:700,color:"#1E293B"}}>
+              {isDebugTab ? "判断ログ" : "エラーログ"}
+            </span>
+            <span style={{fontSize:11,color:"#94A3B8",marginLeft:8}}>
+              {isDebugTab ? debugLogs.length : logs.length}件
+            </span>
           </div>
           <button onClick={onClose} style={{background:"#F1F5F9",border:"none",borderRadius:"50%",width:27,height:27,cursor:"pointer",fontSize:14,color:"#64748B",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
         </div>
 
-        {/* フィルター */}
-        <div style={{display:"flex",gap:5,marginBottom:12,flexWrap:"wrap",flexShrink:0}}>
-          {["all","api","storage","crypto","crisis","ui"].map(cat =>
-            <button key={cat} onClick={() => setFilter(cat)} style={{padding:"3px 10px",borderRadius:12,border:`1.5px solid ${filter===cat?(catColors[cat]||"#6366F1"):"#E2E8F0"}`,background:filter===cat?(catColors[cat]||"#6366F1")+"18":"#FAFAFA",color:filter===cat?(catColors[cat]||"#6366F1"):"#64748B",fontSize:11,fontWeight:filter===cat?600:400,cursor:"pointer"}}>
-              {cat==="all"?"すべて":catLabels[cat]}
+        {/* タブ（DEBUG_AI=true のときのみ表示） */}
+        {DEBUG_AI && (
+          <div style={{display:"flex",marginBottom:10,borderBottom:"1.5px solid #E2E8F0",flexShrink:0}}>
+            <button onClick={() => setActiveTab("error")} style={{flex:1,padding:"7px 0",border:"none",borderBottom:activeTab==="error"?"2px solid #6366F1":"2px solid transparent",background:"none",cursor:"pointer",fontSize:12,fontWeight:activeTab==="error"?600:400,color:activeTab==="error"?"#6366F1":"#64748B"}}>
+              エラーログ
             </button>
-          )}
-        </div>
+            <button onClick={() => setActiveTab("debug")} style={{flex:1,padding:"7px 0",border:"none",borderBottom:activeTab==="debug"?"2px solid #6366F1":"2px solid transparent",background:"none",cursor:"pointer",fontSize:12,fontWeight:activeTab==="debug"?600:400,color:activeTab==="debug"?"#6366F1":"#64748B"}}>
+              判断ログ <span style={{fontSize:9,padding:"1px 5px",borderRadius:6,background:"#FEF3C7",color:"#92400E",marginLeft:4}}>DEV</span>
+            </button>
+          </div>
+        )}
+
+        {/* フィルター（エラーログタブのみ） */}
+        {!isDebugTab && (
+          <div style={{display:"flex",gap:5,marginBottom:12,flexWrap:"wrap",flexShrink:0}}>
+            {["all","api","storage","crypto","crisis","ui"].map(cat =>
+              <button key={cat} onClick={() => setFilter(cat)} style={{padding:"3px 10px",borderRadius:12,border:`1.5px solid ${filter===cat?(catColors[cat]||"#6366F1"):"#E2E8F0"}`,background:filter===cat?(catColors[cat]||"#6366F1")+"18":"#FAFAFA",color:filter===cat?(catColors[cat]||"#6366F1"):"#64748B",fontSize:11,fontWeight:filter===cat?600:400,cursor:"pointer"}}>
+                {cat==="all"?"すべて":catLabels[cat]}
+              </button>
+            )}
+          </div>
+        )}
 
         {/* ログリスト */}
         <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:6}}>
-          {filtered.length === 0
-            ? <div style={{textAlign:"center",color:"#94A3B8",fontSize:13,padding:"30px 0"}}>ログはありません</div>
-            : filtered.map(log =>
-                <div key={log.id} style={{background:"#F8FAFC",borderRadius:10,padding:"9px 12px",border:`1px solid ${catColors[log.category]||"#E2E8F0"}20`}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
-                    <span style={{fontSize:9,padding:"2px 7px",borderRadius:8,background:(catColors[log.category]||"#64748B")+"18",color:catColors[log.category]||"#64748B",fontWeight:600}}>
-                      {catLabels[log.category]||log.category}
-                    </span>
-                    <span style={{fontSize:11,fontWeight:600,color:"#1E293B",flex:1}}>{log.label}</span>
-                    <span style={{fontSize:10,color:"#94A3B8"}}>{log.ts.slice(5,16).replace("T"," ")}</span>
-                  </div>
-                  <div style={{fontSize:10,color:"#64748B",fontFamily:"monospace"}}>{log.code}</div>
-                  {log.context && Object.keys(log.context).length > 0 && (
-                    <div style={{fontSize:10,color:"#94A3B8",marginTop:3,fontFamily:"monospace",wordBreak:"break-all"}}>
-                      {Object.entries(log.context).filter(([k]) => k !== "message" || log.category !== "api")
-                        .map(([k,v]) => `${k}: ${v}`).join(" | ")}
+          {isDebugTab ? (
+            debugLogs.length === 0
+              ? <div style={{textAlign:"center",color:"#94A3B8",fontSize:13,padding:"30px 0"}}>判断ログはありません</div>
+              : debugLogs.map(log => {
+                  const s = log.stages || {};
+                  const isOpen = !!expanded[log.id];
+                  const mode = s.mode_select?.to || "NORMAL";
+                  const modeCol = modeColors[mode] || "#64748B";
+                  return (
+                    <div key={log.id} style={{background:"#F8FAFC",borderRadius:10,padding:"10px 12px",border:`1px solid ${modeCol}30`}}>
+                      {/* ヘッダ：ターン番号・時刻・モード */}
+                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+                        <span style={{fontSize:10,padding:"2px 7px",borderRadius:8,background:modeCol+"18",color:modeCol,fontWeight:700}}>
+                          {mode}{s.conv_mode?.current ? ` / ${s.conv_mode.current}` : ""}
+                        </span>
+                        <span style={{fontSize:11,fontWeight:600,color:"#1E293B",flex:1}}>Turn {log.turn}</span>
+                        <span style={{fontSize:10,color:"#94A3B8"}}>{log.ts.slice(5,16).replace("T"," ")}</span>
+                      </div>
+
+                      {/* 入力 */}
+                      {s.input && (
+                        <div style={{fontSize:11,color:"#475569",marginBottom:4,wordBreak:"break-all"}}>
+                          <span style={{color:"#94A3B8"}}>入力:</span> {s.input.text}
+                        </div>
+                      )}
+
+                      {/* 危機 / モード遷移 */}
+                      <div style={{fontSize:10,color:"#64748B",fontFamily:"monospace",lineHeight:1.5}}>
+                        {s.crisis_detect && <div>危機: {s.crisis_detect.level}</div>}
+                        {s.mode_select && s.mode_select.from !== s.mode_select.to && <div>モード: {s.mode_select.from} → {s.mode_select.to}</div>}
+                        {s.conv_mode && s.conv_mode.changed && <div>会話モード: {s.conv_mode.current} → {s.conv_mode.inferred}（{s.conv_mode.trigger}）</div>}
+                        {s.ltm_inject && s.ltm_inject.count > 0 && <div>LTM注入: {s.ltm_inject.count}件</div>}
+                        {s.guidance && s.guidance.applied && <div>ガイダンス: {s.guidance.applied}</div>}
+                        {s.api_call && <div>API: {s.api_call.engine}/{s.api_call.model} ({s.api_call.latencyMs}ms)</div>}
+                        {s.error && <div style={{color:"#DC2626"}}>エラー: {s.error.message}</div>}
+                      </div>
+
+                      {/* 思考（折りたたみ） */}
+                      {s.thinking && (
+                        <div style={{marginTop:6}}>
+                          <button onClick={() => toggleExpand(log.id)} style={{background:"none",border:"none",cursor:"pointer",fontSize:10,color:"#6366F1",padding:0,fontWeight:600}}>
+                            {isOpen ? "▼" : "▶"} 思考過程を{isOpen ? "閉じる" : "見る"}
+                          </button>
+                          {isOpen && (
+                            <div style={{marginTop:4,padding:"7px 9px",background:"#EEF2FF",borderRadius:7,fontSize:10,color:"#3730A3",whiteSpace:"pre-wrap",lineHeight:1.5,wordBreak:"break-word"}}>
+                              {s.thinking}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* 返答 */}
+                      {s.response && (
+                        <div style={{marginTop:6,padding:"7px 9px",background:"#F1F5F9",borderRadius:7,fontSize:10,color:"#334155",whiteSpace:"pre-wrap",lineHeight:1.5,wordBreak:"break-word"}}>
+                          <span style={{color:"#94A3B8",fontWeight:600}}>返答:</span> {s.response.text}
+                        </div>
+                      )}
+
+                      {/* 詳細JSON（展開時のみ） */}
+                      {isOpen && (
+                        <details style={{marginTop:6}}>
+                          <summary style={{fontSize:10,color:"#94A3B8",cursor:"pointer"}}>生JSON</summary>
+                          <pre style={{fontSize:9,color:"#64748B",background:"#F1F5F9",padding:6,borderRadius:5,overflow:"auto",marginTop:4}}>{JSON.stringify(log, null, 2)}</pre>
+                        </details>
+                      )}
                     </div>
-                  )}
-                </div>
-              )
-          }
+                  );
+                })
+          ) : (
+            filtered.length === 0
+              ? <div style={{textAlign:"center",color:"#94A3B8",fontSize:13,padding:"30px 0"}}>ログはありません</div>
+              : filtered.map(log =>
+                  <div key={log.id} style={{background:"#F8FAFC",borderRadius:10,padding:"9px 12px",border:`1px solid ${catColors[log.category]||"#E2E8F0"}20`}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                      <span style={{fontSize:9,padding:"2px 7px",borderRadius:8,background:(catColors[log.category]||"#64748B")+"18",color:catColors[log.category]||"#64748B",fontWeight:600}}>
+                        {catLabels[log.category]||log.category}
+                      </span>
+                      <span style={{fontSize:11,fontWeight:600,color:"#1E293B",flex:1}}>{log.label}</span>
+                      <span style={{fontSize:10,color:"#94A3B8"}}>{log.ts.slice(5,16).replace("T"," ")}</span>
+                    </div>
+                    <div style={{fontSize:10,color:"#64748B",fontFamily:"monospace"}}>{log.code}</div>
+                    {log.context && Object.keys(log.context).length > 0 && (
+                      <div style={{fontSize:10,color:"#94A3B8",marginTop:3,fontFamily:"monospace",wordBreak:"break-all"}}>
+                        {Object.entries(log.context).filter(([k]) => k !== "message" || log.category !== "api")
+                          .map(([k,v]) => `${k}: ${v}`).join(" | ")}
+                      </div>
+                    )}
+                  </div>
+                )
+          )}
         </div>
 
         {/* 操作ボタン */}
@@ -2117,7 +2325,7 @@ function ErrorLogPanel({ onClose }) {
           </button>
         </div>
         <div style={{fontSize:10,color:"#94A3B8",marginTop:8,textAlign:"center",flexShrink:0}}>
-          ※ 送信機能は将来のバージョンで追加予定です
+          {isDebugTab ? "※ 判断ログは開発用機能です。リリース時に削除されます" : "※ 送信機能は将来のバージョンで追加予定です"}
         </div>
       </div>
     </div>
@@ -2897,6 +3105,10 @@ export default function AICompanionApp() {
   const sendMessage = async (text) => {
     if (!text.trim() || loading) return;
 
+    // 【デバッグ】このターンのIDを確定（convCount+1=次のターン番号）
+    const turnId = convCount + 1;
+    if (DEBUG_AI) debugLog(turnId, "input", { text: text.trim(), length: text.length });
+
     // ピン留め検出
     if (detectPinRequest(text)) {
       // 最新エントリのすべてのfactをピン留め
@@ -2913,17 +3125,22 @@ export default function AICompanionApp() {
       try { sessionStorage.setItem("aico_checkin","1"); } catch {}
       setCheckInDone(true);
       const inferred = inferConvMode(text, convMode);
+      if (DEBUG_AI) debugLog(turnId, "conv_mode", { current: convMode, inferred, trigger: "checkin", changed: inferred !== convMode });
       if (inferred !== convMode) setConvMode(inferred);
     } else if (autoMode) {
       // Layer C：会話の流れから自動推定（チェックイン後も継続）
       const inferred = inferConvMode(text, convMode);
+      if (DEBUG_AI) debugLog(turnId, "conv_mode", { current: convMode, inferred, trigger: "auto", changed: inferred !== convMode });
       if (inferred !== convMode) setConvMode(inferred);
+    } else if (DEBUG_AI) {
+      debugLog(turnId, "conv_mode", { current: convMode, inferred: convMode, trigger: "manual", changed: false });
     }
 
     setMsgs(p => [...p, { id:Date.now(), role:"user", text:text.trim() }]);
     setInput(""); setExpanded(false); setLoading(true);
 
     const crisisLevel = detectCrisisFull(text); // Layer 1+2+3 統合検知（Phase 2）
+    if (DEBUG_AI) debugLog(turnId, "crisis_detect", { level: crisisLevel, previousMode: mode });
     setCl(crisisLevel);
     let nm = mode;
     if (crisisLevel === "CRITICAL") {
@@ -2945,6 +3162,7 @@ export default function AICompanionApp() {
       if (nm === "CRISIS" && crisisLevel === "NONE") nm = "WATCHFUL";
     }
     setMode(nm);
+    if (DEBUG_AI) debugLog(turnId, "mode_select", { from: mode, to: nm, reason: nm !== mode ? "crisis level changed" : "unchanged" });
     // 危機レベルが上昇した場合のみログ記録（会話内容は含めない）
     if (nm !== mode) {
       recordLog(ERR.CRISIS_TRANS, { from: mode, to: nm, detectedLevel: crisisLevel }, phase);
@@ -2982,7 +3200,15 @@ export default function AICompanionApp() {
     }
 
     // 段階的ガイダンスを取得し extra に追加
-    const iGuidance = getGraduatedGuidance(iState, convCount, crisisLevel, convMode, isDependencyRisk(text));
+    const _dependencyDetected = isDependencyRisk(text);
+    const iGuidance = getGraduatedGuidance(iState, convCount, crisisLevel, convMode, _dependencyDetected);
+    if (DEBUG_AI) debugLog(turnId, "guidance", {
+      applied: iGuidance ? iGuidance.type : null,
+      text:    iGuidance ? iGuidance.text : null,
+      dependencyDetected: _dependencyDetected,
+      phase:   iState.phase,
+      sessionCount: iState.sessionCount,
+    });
     if (iGuidance) {
       if (iGuidance.type === "dependency") {
         extra += "\n" + iGuidance.text;
@@ -3058,20 +3284,56 @@ export default function AICompanionApp() {
     const annotatedHistory = buildAnnotatedHistory(histRef.current);
     const sysPrompt = buildPrompt(companion, nm, profile, S, convMode) + extra;
 
+    // 【デバッグ】LTMの注入内容と最終プロンプトのメタ情報をログ
+    if (DEBUG_AI) {
+      const _allLtm = getLongTermMemory();
+      const _curCount = parseInt(localStorage.getItem("aico_convCount") || "0");
+      const _ltmEntries = [];
+      _allLtm.slice(-8).forEach(entry => {
+        (entry.entries || (entry.facts || []).map(f => ({fact:f,certainty:3,pinned:false}))).forEach(e => {
+          const _score = calcCertainty({...e, conv_count: entry.conv_count, last_mentioned_count: entry.last_mentioned_count}, _curCount);
+          const _label = certaintyLabel(_score);
+          if (_label) _ltmEntries.push({ fact: e.fact, certainty: _score, label: _label, pinned: !!e.pinned });
+        });
+      });
+      debugLog(turnId, "ltm_inject", { count: _ltmEntries.length, entries: _ltmEntries.slice(-15) });
+      debugLog(turnId, "prompt", {
+        engine: engId,
+        model,
+        systemPromptChars: sysPrompt.length,
+        historyMessages: annotatedHistory.length,
+        extraDirectives: extra ? extra.trim() : null,
+        useProxy,
+        phase,
+      });
+    }
+
+    const _apiStart = Date.now();
     try {
       const aiText = useProxy
         ? await callAIProxy(userTier, tierToken, engId, model, sysPrompt, annotatedHistory, phase)
         : await callAI(engId, model, apiKey, sysPrompt, annotatedHistory, phase, { llamaEndpoint: apiConfig.llamaEndpoint });
-      const action = parseSettingAction(aiText);
+      const _apiLatencyMs = Date.now() - _apiStart;
+      // 【デバッグ】思考と返答を分離。DEBUG_AI=false のときは元の挙動を保つ
+      const { thinking, response: rawResponse } = DEBUG_AI
+        ? extractThinking(aiText)
+        : { thinking: null, response: aiText };
+      if (DEBUG_AI) {
+        debugLog(turnId, "api_call",  { engine: engId, model, latencyMs: _apiLatencyMs, rawLength: (aiText||"").length });
+        debugLog(turnId, "thinking",  thinking || "(タグなし。AIが指示に従わなかった可能性あり)");
+      }
+      const action = parseSettingAction(rawResponse);
       if (action) applySettingAction(action);
-      const clean = action ? aiText.replace(/\{"action":"set_setting","key":"[^"]+","value":"[^"]+"\}/, "").trim() : aiText;
+      const clean = action ? rawResponse.replace(/\{"action":"set_setting","key":"[^"]+","value":"[^"]+"\}/, "").trim() : rawResponse;
+      if (DEBUG_AI) debugLog(turnId, "response", { text: clean || rawResponse, length: (clean || rawResponse).length, hasAction: !!action });
       // D案: AIレスポンスにもタイムスタンプを付与
-      histRef.current = [...histRef.current, { role:"assistant", content:clean || aiText, ts: Date.now() }];
+      histRef.current = [...histRef.current, { role:"assistant", content:clean || rawResponse, ts: Date.now() }];
       lsSet("history", histRef.current);
       // B案: セッション引き継ぎ情報を保存（会話内容は含めない）
       saveSessionHandoff(crisisLevel, convMode);
       setMsgs(p => [...p, { id:Date.now()+1, role:"ai", text:clean||"設定したよ！", mode:nm, sa:!!action }]);
     } catch(err) {
+      if (DEBUG_AI) debugLog(turnId, "error", { engine: engId, model, message: err.message, latencyMs: Date.now() - _apiStart });
       const last = getLogs().slice(-1)[0];
       if (!last || Date.now() - new Date(last.ts).getTime() > 500) {
         const logged = recordLog(ERR.API_UNKNOWN, { engine: engId, message: err.message }, phase);
@@ -3086,6 +3348,7 @@ export default function AICompanionApp() {
         mode: nm,
       }]);
     } finally {
+      if (DEBUG_AI) debugFinalize(turnId);
       setLoading(false);
       // 会話カウントを更新
       const newCount = convCount + 1;
