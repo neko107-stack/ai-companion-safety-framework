@@ -858,7 +858,17 @@ async function callAI(engineId, model, apiKey, systemPrompt, messages, phase = "
           "anthropic-version": "2023-06-01",
           "anthropic-dangerous-direct-browser-access": "true",
         },
-        body: JSON.stringify({ model, max_tokens: 1000, system: systemPrompt, messages }),
+        // 【デバッグ】DEBUG_AI=true のとき、assistantのprefillで <thinking> を強制開始させる
+        // Anthropicの仕様: messages末尾がassistant roleならその内容を返答の冒頭として継続生成する
+        // 末尾の空白は生成前にトリムされるため、改行は付けない
+        body: JSON.stringify({
+          model,
+          max_tokens: DEBUG_AI ? 2000 : 1000,
+          system: systemPrompt,
+          messages: DEBUG_AI
+            ? [...messages, { role: "assistant", content: "<thinking>" }]
+            : messages,
+        }),
       });
       d = await res.json();
     } catch(netErr) {
@@ -874,7 +884,8 @@ async function callAI(engineId, model, apiKey, systemPrompt, messages, phase = "
       recordLog(ERR.API_RESPONSE, {...ctx, httpStatus: res.status}, phase);
       throw new Error("レスポンスの形式が不正です");
     }
-    return d.content[0].text;
+    // 【デバッグ】prefillした "<thinking>" は応答テキストに含まれないので、後続パース用に前置する
+    return DEBUG_AI ? "<thinking>" + d.content[0].text : d.content[0].text;
   }
 
   if (engineId === "openai") {
