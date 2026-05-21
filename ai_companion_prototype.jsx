@@ -860,11 +860,15 @@ async function callAI(engineId, model, apiKey, systemPrompt, messages, phase = "
         },
         // 【デバッグ】DEBUG_AI=true のとき Extended Thinking を有効化し、
         // 思考過程を専用のthinking blockとしてレスポンスから取得する。
-        // Claude 4系（Opus/Sonnet 4.x）で利用可能。max_tokens > budget_tokens 必須。
+        // Claude 4系（Opus/Sonnet 4.x）の新API: thinking.type は "adaptive" を使用し、
+        // 思考量は output_config.effort（"low"|"medium"|"high"）で制御する。
         body: JSON.stringify({
           model,
           max_tokens: DEBUG_AI ? 4000 : 1000,
-          ...(DEBUG_AI ? { thinking: { type: "enabled", budget_tokens: 2000 } } : {}),
+          ...(DEBUG_AI ? {
+            thinking: { type: "adaptive" },
+            output_config: { effort: "medium" },
+          } : {}),
           system: systemPrompt,
           messages,
         }),
