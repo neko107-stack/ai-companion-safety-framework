@@ -858,16 +858,15 @@ async function callAI(engineId, model, apiKey, systemPrompt, messages, phase = "
           "anthropic-version": "2023-06-01",
           "anthropic-dangerous-direct-browser-access": "true",
         },
-        // 【デバッグ】DEBUG_AI=true のとき、assistantのprefillで <thinking> を強制開始させる
-        // Anthropicの仕様: messages末尾がassistant roleならその内容を返答の冒頭として継続生成する
-        // 末尾の空白は生成前にトリムされるため、改行は付けない
+        // 【デバッグ】DEBUG_AI=true のとき Extended Thinking を有効化し、
+        // 思考過程を専用のthinking blockとしてレスポンスから取得する。
+        // Claude 4系（Opus/Sonnet 4.x）で利用可能。max_tokens > budget_tokens 必須。
         body: JSON.stringify({
           model,
-          max_tokens: DEBUG_AI ? 2000 : 1000,
+          max_tokens: DEBUG_AI ? 4000 : 1000,
+          ...(DEBUG_AI ? { thinking: { type: "enabled", budget_tokens: 2000 } } : {}),
           system: systemPrompt,
-          messages: DEBUG_AI
-            ? [...messages, { role: "assistant", content: "<thinking>" }]
-            : messages,
+          messages,
         }),
       });
       d = await res.json();
@@ -880,12 +879,30 @@ async function callAI(engineId, model, apiKey, systemPrompt, messages, phase = "
       recordLog(errType, {...ctx, httpStatus: res.status, apiError: d.error.type}, phase);
       throw new Error(d.error.message);
     }
+    // 【デバッグ】content配列からthinkingブロックとtextブロックを分離して取り出し、
+    // extractThinking互換の <thinking>...</thinking>\n<response>...</response> 形式に合成する
+    if (DEBUG_AI) {
+      let thinkingText = "";
+      let responseText = "";
+      for (const block of d.content || []) {
+        if (block.type === "thinking" && block.thinking) thinkingText += block.thinking;
+        else if (block.type === "text" && block.text)    responseText += block.text;
+      }
+      if (!responseText) {
+        recordLog(ERR.API_RESPONSE, {...ctx, httpStatus: res.status}, phase);
+        throw new Error("レスポンスの形式が不正です");
+      }
+      // text内に既存の<response>タグがあれば中身を取り出して二重ラップを防ぐ
+      const respMatch = responseText.match(/<response>([\s\S]*?)<\/response>/);
+      const cleanResponse = respMatch ? respMatch[1].trim() : responseText.trim();
+      const finalThinking = thinkingText.trim() || "(thinking block empty)";
+      return `<thinking>\n${finalThinking}\n</thinking>\n<response>\n${cleanResponse}\n</response>`;
+    }
     if (!d.content?.[0]?.text) {
       recordLog(ERR.API_RESPONSE, {...ctx, httpStatus: res.status}, phase);
       throw new Error("レスポンスの形式が不正です");
     }
-    // 【デバッグ】prefillした "<thinking>" は応答テキストに含まれないので、後続パース用に前置する
-    return DEBUG_AI ? "<thinking>" + d.content[0].text : d.content[0].text;
+    return d.content[0].text;
   }
 
   if (engineId === "openai") {
@@ -1373,7 +1390,7 @@ function getGraduatedGuidance(iState, convCount, crisisLevel, convMode, isDepend
   return { type: "bridging", text: template };
 }
 
-function buildPrompt(companion, mode, profile, appSettings, convMode = "friend") {
+function buildPrompt(companion, mode, profile, appSettings, convMode = "friend", engineId = null) {
   const intNames = (profile.interests || [])
     .map(id => INTERESTS.find(g => g.id === id)?.label).filter(Boolean).join("、");
   const probe = profile.pem === "always"
@@ -1443,7 +1460,7 @@ function buildPrompt(companion, mode, profile, appSettings, convMode = "friend")
 【パーソナリティ探索】${probe}
 【コーチング姿勢】${profile.cs === "strict" ? "甘やかさない・厳しく正直に（コーチモード時のみ）" : profile.cs === "gentle" ? "やさしく包みながら（コーチモード時のみ）" : "コンパニオンの性格に委ねる"}
 【${convModeLabel}】${modeInst}
-${settingsCtx}${ltmText}`.trim() + (DEBUG_AI ? DEBUG_PROMPT_APPEND : "");
+${settingsCtx}${ltmText}`.trim() + (DEBUG_AI && engineId !== "claude" ? DEBUG_PROMPT_APPEND : "");
 }
 
 function parseSettingAction(text) {
@@ -3293,7 +3310,7 @@ export default function AICompanionApp() {
 
     // D案: 時制注釈付き履歴をAPIに渡す（表示用のhistRefとは別物）
     const annotatedHistory = buildAnnotatedHistory(histRef.current);
-    const sysPrompt = buildPrompt(companion, nm, profile, S, convMode) + extra;
+    const sysPrompt = buildPrompt(companion, nm, profile, S, convMode, engId) + extra;
 
     // 【デバッグ】LTMの注入内容と最終プロンプトのメタ情報をログ
     if (DEBUG_AI) {
