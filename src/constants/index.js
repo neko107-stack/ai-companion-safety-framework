@@ -70,10 +70,20 @@ export const AI_ENGINES = [
     keyLabel: "Google AI Studio",
   },
   {
-    id: "llama", name: "Llama", maker: "Meta（オフライン）",
-    desc: "完全オフライン・無料・プライバシー最強", color: "#A78BFA",
-    models: [{id:"llama-local", label:"ローカルモデル（llama.cpp）"}],
-    keyPrefix: "", keyLink: "https://llama.meta.com", keyLabel: "Llamaダウンロード",
+    id: "llama", name: "Llama / Ollama", maker: "ローカル（オフライン）",
+    desc: "完全オフライン・無料・プライバシー最強。Gemma・Qwen・Llama 等を Ollama または llama.cpp で動作。", color: "#A78BFA",
+    models: [
+      {id:"gemma3:4b",   label:"Gemma 3 4B（Ollama・入門・軽量）"},
+      {id:"gemma3:12b",  label:"Gemma 3 12B（Ollama・推奨）"},
+      {id:"gemma3:27b",  label:"Gemma 3 27B（Ollama・最高品質）"},
+      {id:"qwen2.5:7b",  label:"Qwen2.5 7B（Ollama・日本語推奨）"},
+      {id:"qwen2.5:3b",  label:"Qwen2.5 3B（Ollama・軽量）"},
+      {id:"llama3.2:3b", label:"Llama 3.2 3B（Ollama）"},
+      {id:"llama3.1:8b", label:"Llama 3.1 8B（Ollama）"},
+      {id:"llama-local",  label:"llama.cpp（自動検出）"},
+      {id:"custom",       label:"カスタム（直接入力）"},
+    ],
+    keyPrefix: "", keyLink: "https://ollama.com", keyLabel: "Ollamaをダウンロード",
     noKey: true,
   },
 ];
@@ -87,5 +97,5 @@ export const DEFAULT_API_MODELS = {
   claude: "claude-sonnet-4-6",
   openai: "gpt-4o",
   gemini: "gemini-1.5-pro",
-  llama:  "llama-local",
+  llama:  "gemma3:12b",
 };

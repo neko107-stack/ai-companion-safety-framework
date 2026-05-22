@@ -815,8 +815,11 @@ const AI_ENGINES = [
   },
   {
     id: "llama", name: "Llama / Ollama", maker: "ローカル（オフライン）",
-    desc: "完全オフライン・無料・プライバシー最強。Ollama または llama.cpp で動作。", color: "#A78BFA",
+    desc: "完全オフライン・無料・プライバシー最強。Gemma・Qwen・Llama 等を Ollama または llama.cpp で動作。", color: "#A78BFA",
     models: [
+      {id:"gemma3:4b",    label:"Gemma 3 4B（Ollama・入門・軽量）"},
+      {id:"gemma3:12b",   label:"Gemma 3 12B（Ollama・推奨）"},
+      {id:"gemma3:27b",   label:"Gemma 3 27B（Ollama・最高品質）"},
       {id:"qwen2.5:7b",   label:"Qwen2.5 7B（Ollama・日本語推奨）"},
       {id:"qwen2.5:3b",   label:"Qwen2.5 3B（Ollama・軽量）"},
       {id:"llama3.2:3b",  label:"Llama 3.2 3B（Ollama）"},
@@ -1943,7 +1946,7 @@ function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
   const [selectedEngine, setSelectedEngine] = useState(apiConfig.mainEngine || "claude");
   const [keys,    setKeys]    = useState(apiConfig.keys  || {});
   const [models,  setModels]  = useState(apiConfig.models || {
-    claude:"claude-sonnet-4-20250514", openai:"gpt-4o", gemini:"gemini-1.5-pro", llama:"llama-local",
+    claude:"claude-sonnet-4-20250514", openai:"gpt-4o", gemini:"gemini-1.5-pro", llama:"gemma3:12b",
   });
   const [mainEngine, setMainEngine] = useState(apiConfig.mainEngine || "claude");
   const [showKey,    setShowKey]    = useState({});
@@ -2042,10 +2045,8 @@ function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:10}}>
                   <div style={{background:"#F5F3FF",border:"1px solid #DDD6FE",borderRadius:10,padding:"10px 12px"}}>
                     <div style={{fontSize:12,fontWeight:700,color:"#5B21B6",marginBottom:4}}>🦙 Ollama（推奨）</div>
-                    <div style={{fontSize:11,color:"#6D28D9",lineHeight:1.6,marginBottom:6}}>インストーラーで簡単導入。モデルをコマンド1行でダウンロード。</div>
-                    <code style={{display:"block",fontSize:10,background:"#EDE9FE",color:"#4C1D95",padding:"5px 8px",borderRadius:6,lineHeight:1.7}}>
-                      ollama pull qwen2.5:7b
-                    </code>
+                    <div style={{fontSize:11,color:"#6D28D9",lineHeight:1.6,marginBottom:6}}>インストーラーで簡単導入。Gemma・Qwen・Llama 等をコマンド1行でダウンロード。</div>
+                    <code style={{display:"block",fontSize:10,background:"#EDE9FE",color:"#4C1D95",padding:"5px 8px",borderRadius:6,lineHeight:1.7,whiteSpace:"pre"}}>{"ollama pull gemma3:4b   # 軽量（8GB RAM~）\nollama pull gemma3:12b  # 推奨（16GB RAM~）"}</code>
                     <div style={{fontSize:10,color:"#7C3AED",marginTop:4}}>ポート: 11434</div>
                     <a href="https://ollama.com" target="_blank" rel="noopener noreferrer" style={{display:"inline-block",marginTop:6,fontSize:11,color:"#6366F1",textDecoration:"none",padding:"3px 8px",borderRadius:6,background:"#EEF2FF",border:"1px solid #C7D2FE"}}>🔗 Ollamaをダウンロード</a>
                   </div>
