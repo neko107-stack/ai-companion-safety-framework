@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, createElement } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, createElement } from "react";
 
 // ━━━ 定数 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -3036,8 +3036,10 @@ export default function AICompanionApp() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const scrollRef   = useRef(null);
-  const histRef     = useRef(lsGet("history", []));
+  const scrollRef      = useRef(null);
+  const isInitialLoad  = useRef(true);
+  const isNearBottom   = useRef(true);
+  const histRef        = useRef(lsGet("history", []));
 
 
   // ━━ 各 state の変化を自動保存 ━━
@@ -3059,9 +3061,27 @@ export default function AICompanionApp() {
     ssSet("apiKeys",          apiConfig.keys);   // ← APIキーは sessionStorage
   }, [apiConfig]);
 
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  useLayoutEffect(() => {
+    if (!scrollRef.current) return;
+    if (isInitialLoad.current || isNearBottom.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      const timer = setTimeout(() => {
+        if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }, 320);
+      return () => clearTimeout(timer);
+    }
   }, [msgs]);
+
+  useLayoutEffect(() => {
+    if (!showStartupVaultUnlock && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [showStartupVaultUnlock]);
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => { isInitialLoad.current = false; });
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   // C案: 再入場チェックイン — 前回セッションから1時間以上経過した場合に挨拶を追加
   useEffect(() => {
@@ -3923,9 +3943,9 @@ export default function AICompanionApp() {
       )}
 
       {/* トランスクリプト */}
-      <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"14px 13px",display:"flex",flexDirection:"column",gap:11}}>
+      <div ref={scrollRef} onScroll={() => { if (scrollRef.current) { const { scrollTop, scrollHeight, clientHeight } = scrollRef.current; isNearBottom.current = scrollHeight - scrollTop - clientHeight < 80; }}} style={{flex:1,overflowY:"auto",padding:"14px 13px",display:"flex",flexDirection:"column",gap:11}}>
         {msgs.map(m => (
-          <div key={m.id} style={{display:"flex",flexDirection:m.role==="user"?"row-reverse":"row",alignItems:"flex-end",gap:7,animation:"si 0.3s ease"}}>
+          <div key={m.id} style={{display:"flex",flexDirection:m.role==="user"?"row-reverse":"row",alignItems:"flex-end",gap:7,...(!isInitialLoad.current ? {animation:"si 0.3s ease"} : {})}}>
             {m.role === "ai" && (
               <div style={{width:26,height:26,borderRadius:"50%",background:ac.light,border:`1.5px solid ${modeAc}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,flexShrink:0}}>
                 {companion.emoji}
