@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useLayoutEffect, createElement } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, createElement } from "react";
+import { discoverModels, mergeModels } from "./src/ai/model-discovery.js";
 
 // ━━━ 定数 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -783,8 +784,9 @@ const AI_ENGINES = [
     id: "claude", name: "Claude", maker: "Anthropic",
     desc: "安全性重視・日本語優秀", color: "#D4743A",
     models: [
-      {id:"claude-sonnet-4-6",         label:"Sonnet 4.6（推奨）"},
-      {id:"claude-opus-4-7",           label:"Opus 4.7（最高性能）"},
+      {id:"claude-opus-4-8",           label:"Opus 4.8（最新・最高性能）"},
+      {id:"claude-sonnet-4-6",         label:"Sonnet 4.6（推奨・バランス）"},
+      {id:"claude-opus-4-7",           label:"Opus 4.7（高性能）"},
       {id:"claude-haiku-4-5-20251001", label:"Haiku 4.5（高速・軽量）"},
     ],
     keyPrefix: "sk-ant-",
@@ -1956,6 +1958,58 @@ function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
   const [llamaCustomModel, setLlamaCustomModel] = useState(apiConfig.llamaCustomModel || "");
   const [showVaultSaveModal, setShowVaultSaveModal] = useState(false);
   const [pendingKeys,        setPendingKeys]        = useState(null);
+  // 動的モデル検出: エンジンごとの検出結果 / 取得中フラグ / エラーメッセージ
+  const [discovered,  setDiscovered]  = useState({});
+  const [discovering, setDiscovering] = useState({});
+  const [discoverErr, setDiscoverErr] = useState({});
+
+  const DISCOVER_CACHE_KEY = "aico_discoveredModels";
+  const readDiscoverCache = () => {
+    try { return JSON.parse(sessionStorage.getItem(DISCOVER_CACHE_KEY) || "{}"); } catch { return {}; }
+  };
+
+  // 指定エンジンのモデル一覧を取得。force=false ならセッションキャッシュを優先。
+  const runDiscovery = useCallback(async (engineId, { force = false } = {}) => {
+    const e = AI_ENGINES.find(x => x.id === engineId);
+    if (!e || e.noKey) return; // Ollama/llama は対象外
+    const key = keys[engineId];
+    if (!key || key.trim().length < 8) return;
+
+    if (!force) {
+      const cached = readDiscoverCache();
+      if (Array.isArray(cached[engineId])) {
+        setDiscovered(p => ({ ...p, [engineId]: cached[engineId] }));
+        return;
+      }
+    }
+
+    setDiscovering(p => ({ ...p, [engineId]: true }));
+    setDiscoverErr(p => ({ ...p, [engineId]: null }));
+    try {
+      const list = await discoverModels(engineId, key.trim());
+      if (list.length > 0) {
+        setDiscovered(p => ({ ...p, [engineId]: list }));
+        try {
+          const cache = readDiscoverCache();
+          cache[engineId] = list;
+          sessionStorage.setItem(DISCOVER_CACHE_KEY, JSON.stringify(cache));
+        } catch {}
+      } else {
+        setDiscoverErr(p => ({ ...p, [engineId]: "モデル一覧を取得できませんでした（標準リストを表示）" }));
+      }
+    } finally {
+      setDiscovering(p => ({ ...p, [engineId]: false }));
+    }
+  }, [keys]);
+
+  // mount時: セッションキャッシュから復元
+  useEffect(() => { setDiscovered(readDiscoverCache()); }, []);
+
+  // 選択中エンジンに鍵がある時、自動でモデル一覧を取得（キャッシュ優先）
+  useEffect(() => {
+    const key = keys[selectedEngine];
+    if (key && key.trim().length >= 8) runDiscovery(selectedEngine);
+  }, [selectedEngine, keys, runDiscovery]);
 
   const hasAnyKey = AI_ENGINES.some(e => e.noKey || (keys[e.id] && keys[e.id].trim().length > 8));
   const eng = AI_ENGINES.find(e => e.id === selectedEngine);
@@ -2103,15 +2157,30 @@ function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
               </div>
             )}
 
-            {/* モデル選択 */}
-            <div style={{fontSize:11,fontWeight:600,color:"#64748B",marginBottom:8}}>使用するモデル</div>
-            <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:14}}>
-              {eng.models.map(m => (
+            {/* モデル選択（ベースライン + 動的検出をマージ） */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+              <div style={{fontSize:11,fontWeight:600,color:"#64748B"}}>使用するモデル</div>
+              {!eng.noKey && (
+                <button
+                  onClick={() => runDiscovery(eng.id, { force: true })}
+                  disabled={discovering[eng.id] || !(keys[eng.id] && keys[eng.id].trim().length >= 8)}
+                  title="各社のAPIから最新のモデル一覧を取得します"
+                  style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${eng.color}`,background:"#FFF",color:eng.color,cursor:(discovering[eng.id]||!(keys[eng.id]&&keys[eng.id].trim().length>=8))?"not-allowed":"pointer",fontSize:11,fontWeight:600,opacity:(keys[eng.id]&&keys[eng.id].trim().length>=8)?1:0.5}}>
+                  {discovering[eng.id] ? "取得中…" : "🔄 モデル一覧を更新"}
+                </button>
+              )}
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:6}}>
+              {(eng.noKey ? eng.models : mergeModels(eng.models, discovered[eng.id] || [])).map(m => (
                 <button key={m.id} onClick={() => setModels(p => ({...p,[eng.id]:m.id}))} style={{padding:"8px 12px",borderRadius:9,border:`1.5px solid ${models[eng.id]===m.id?eng.color:"#E2E8F0"}`,background:models[eng.id]===m.id?eng.color+"12":"#FAFAFA",cursor:"pointer",textAlign:"left",fontSize:13,color:models[eng.id]===m.id?eng.color:"#475569",fontWeight:models[eng.id]===m.id?600:400,transition:"all 0.15s"}}>
                   {m.label}
                 </button>
               ))}
             </div>
+            {discoverErr[eng.id] && (
+              <div style={{fontSize:11,color:"#94A3B8",marginBottom:14}}>{discoverErr[eng.id]}</div>
+            )}
+            {!discoverErr[eng.id] && <div style={{marginBottom:8}} />}
             {/* カスタムモデル名入力（Llama / カスタム選択時） */}
             {eng.noKey && models[eng.id] === "custom" && (
               <div style={{marginBottom:14}}>
