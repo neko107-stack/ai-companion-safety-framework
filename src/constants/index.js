@@ -39,8 +39,9 @@ export const AI_ENGINES = [
     id: "claude", name: "Claude", maker: "Anthropic",
     desc: "安全性重視・日本語優秀", color: "#D4743A",
     models: [
-      {id:"claude-sonnet-4-6",         label:"Sonnet 4.6（推奨）"},
-      {id:"claude-opus-4-7",           label:"Opus 4.7（最高性能）"},
+      {id:"claude-opus-4-8",           label:"Opus 4.8（最新・最高性能）"},
+      {id:"claude-sonnet-4-6",         label:"Sonnet 4.6（推奨・バランス）"},
+      {id:"claude-opus-4-7",           label:"Opus 4.7（高性能）"},
       {id:"claude-haiku-4-5-20251001", label:"Haiku 4.5（高速・軽量）"},
     ],
     keyPrefix: "sk-ant-",
