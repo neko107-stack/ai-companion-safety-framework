@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, createElement } from "react";
+import { useState, useRef, useEffect, useCallback, useLayoutEffect, createElement } from "react";
 
 // ━━━ 定数 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -3036,8 +3036,18 @@ export default function AICompanionApp() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const scrollRef   = useRef(null);
-  const histRef     = useRef(lsGet("history", []));
+  const scrollRef        = useRef(null);
+  const histRef          = useRef(lsGet("history", []));
+  const isInitialScrollRef = useRef(true);
+  const savedScrollRef   = useRef(0);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [unreadCount,   setUnreadCount]   = useState(0);
+
+  const handleChatScroll = useCallback(() => {
+    if (!scrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    setShowScrollBtn(scrollHeight - scrollTop - clientHeight > 80);
+  }, []);
 
 
   // ━━ 各 state の変化を自動保存 ━━
@@ -3059,8 +3069,37 @@ export default function AICompanionApp() {
     ssSet("apiKeys",          apiConfig.keys);   // ← APIキーは sessionStorage
   }, [apiConfig]);
 
+  useLayoutEffect(() => {
+    if (!scrollRef.current) return;
+    if (isInitialScrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      isInitialScrollRef.current = false;
+    } else {
+      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    }
+  }, [msgs]);
+
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (!scrollRef.current) return;
+    if (showSettings) {
+      savedScrollRef.current = scrollRef.current.scrollTop;
+    } else {
+      requestAnimationFrame(() => {
+        if (scrollRef.current) scrollRef.current.scrollTop = savedScrollRef.current;
+      });
+    }
+  }, [showSettings]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.addEventListener("scroll", handleChatScroll, { passive: true });
+    return () => el.removeEventListener("scroll", handleChatScroll);
+  }, [handleChatScroll]);
+
+  useEffect(() => {
+    if (showScrollBtn) setUnreadCount(c => c + 1);
+    else setUnreadCount(0);
   }, [msgs]);
 
   // C案: 再入場チェックイン — 前回セッションから1時間以上経過した場合に挨拶を追加
@@ -3946,6 +3985,24 @@ export default function AICompanionApp() {
           </div>
         )}
       </div>
+
+      {/* スクロール最下段ボタン */}
+      {showScrollBtn && (
+        <div style={{position:"absolute",bottom:80,right:16,zIndex:50}}>
+          <button
+            onClick={() => { scrollRef.current?.scrollTo({top:scrollRef.current.scrollHeight,behavior:"smooth"}); setUnreadCount(0); }}
+            style={{position:"relative",width:36,height:36,borderRadius:"50%",background:ac.main,color:"#FFF",border:"none",cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 2px 8px ${ac.main}60`,transition:"all 0.2s"}}
+            title="最新メッセージへ"
+          >
+            ↓
+            {unreadCount > 0 && (
+              <span style={{position:"absolute",top:-4,left:-4,minWidth:16,height:16,borderRadius:8,background:"#EF4444",color:"#FFF",fontSize:10,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 3px"}}>
+                {unreadCount}
+              </span>
+            )}
+          </button>
+        </div>
+      )}
 
       {/* フッター */}
       <div style={{padding:"9px 13px 13px",borderTop:`1px solid ${T.panelBorder}`,background:T.headerBg}}>
