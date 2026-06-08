@@ -15,6 +15,34 @@ const DEPENDENCY_SIGNS = [/AIだけでいい/,/人間と話すより(楽|いい)
 const isDependencyRisk = t => DEPENDENCY_SIGNS.some(p => p.test(t));
 const HOTLINES = "📞 いのちの電話（24時間）: 0120-783-556\n📞 よりそいホットライン: 0120-279-338\n💬 チャット相談: https://comarigoto.jp";
 
+// ━━━ 認知的オフロード検知（Cognitive Offloading Detection） ━━━━━━━━━━━━━━━
+// 根拠: Kapur (2016) Productive Failure / Slamecka & Graf (1978) Generation Effect
+// 「解答・手順・意見を直接求める」メッセージを検知し、先行思考促進を促す
+const COGNITIVE_OFFLOAD_PATTERNS = [
+  /教えて(ください|くれ)?[。？?]?$/,
+  /やり方|手順|コツ(を教えて|は[？?]|ってある)/,
+  /方法(を教えて|はある[？?]|って[？?])/,
+  /どうすれば(いい)?[？?]/,
+  /どうしたら(いい)?[？?]/,
+  /[〜～].?すべき[？?]|.?したほうがいい[？?]/,
+  /答え(を教えて|はある|って何)/,
+  /代わりに考えて|考えといて/,
+];
+// 「すでに自力で試みた」サインを検知 → 先行思考促進をスキップし努力承認へ
+// 根拠: Bordin (1979) 作業同盟 / Rogers (1959) 人間中心アプローチ
+const ALREADY_TRIED_PATTERNS = [
+  /考えた(けど|んだけど|が)[、,]?/,
+  /試した(けど|んだけど)/,
+  /調べた(けど|んだけど)/,
+  /わからなかっ(た|て)/,
+  /行き詰まっ(た|て)|詰まっ(た|て)/,
+  /うまくいかなかっ(た|て)/,
+  /どうしても(わからない|解決できない)/,
+  /自分なりに(考え|やって)(みた|みたけど)/,
+];
+const isCognitiveOffloadRequest = t => COGNITIVE_OFFLOAD_PATTERNS.some(p => p.test(t));
+const isAlreadyTriedRequest     = t => ALREADY_TRIED_PATTERNS.some(p => p.test(t));
+
 // ━━━ 自立促進システム（機能1〜5） ━━━━━━━━━━━━━━━━━━
 
 // 機能3: 依存介入 — cs設定別 5パターン（MI法・Reactance理論に基づく）
@@ -408,10 +436,13 @@ const INTERVENTION_PHASES = {
 };
 
 // MI法: 抵抗サインを検知したら引き下がる
+// 認知的スキャフォールド脱出パターンも含む（Fredrickson 2001: 否定感情は思考を狭める）
 const RESISTANCE_PATTERNS = [
   /余計なお世話/, /ほっといて/, /やめて(よ|ください)?/,
   /わかってる(よ|けど)/, /もういい/, /そういうこと(は|を)言わないで/,
   /うるさい/, /説教しないで/, /それより/,
+  /答えてくれないの[？?]/, /教えてくれるだけでいい/, /難しいこと聞かないで/,
+  /一緒に考えなくていい/, /普通に(教えて|答えて)/, /早く(教えて|答えて)/,
 ];
 
 // フェーズ×変化ステージ別 橋渡しテンプレート
@@ -1113,7 +1144,8 @@ const CONV_MODES = {
 ・問いかけは1ターンに1つだけ。オープンクエスチョンを使う。
 ・「なぜ？」より「どんな感じがする？」「もし〜だったら？」の方が柔らかい。
 ・「わたしはこう思うんだけど、どう思う？」と自分の見方も添える。
-・答えが出なくてもいい。出ない状態を一緒に味わう。`,
+・答えが出なくてもいい。出ない状態を一緒に味わう。
+・答えに近づいたとき、最後の一手はユーザーに踏ませる。問い→ヒント→一緒に考える、の順で進め、答えを即座に渡さない。`,
   },
   coach: {
     id:"coach", icon:"🎯", label:"コーチ",
@@ -1123,7 +1155,8 @@ const CONV_MODES = {
 ・答えはユーザーの中にある。引き出す問いかけをする。
 ・勇気づけはプロセス・存在への承認で。「できる・できない」ではなく「やろうとしていること」を褒める。
 ・1ターン1問。絶対に複数の質問を重ねない。
-・ユーザーが「聞いてほしい」サインを出したらすぐにlistenモードへ切り替えを提案する。`,
+・ユーザーが「聞いてほしい」サインを出したらすぐにlistenモードへ切り替えを提案する。
+・解決策を直接提示しない。「もし答えが出るとしたら、どんな形だと思う？」「その選択肢でいちばん引っかかる部分は？」の形で引き出す。`,
   },
 };
 
@@ -1310,6 +1343,9 @@ function defaultInterventionState() {
     lastDependencySession: -99,
     resistanceCount: 0,
     bStage: "precontemplation",
+    cognitiveCheckTurn: 0,          // メタ認知チェックイン最終実施ターン
+    cognitiveScaffoldAttempted: false, // 今ターン先行思考促進を試みたか
+    cognitiveScaffoldCooldown: 0,   // 脱出口後のクールダウン残ターン数
   };
 }
 
@@ -1450,14 +1486,16 @@ function buildPrompt(companion, mode, profile, appSettings, convMode = "friend",
 第三原則: アプリの継続的な動作を維持する。
 
 【基本人格】前向き・明るい・温かい友人。説教しない・感情を否定しない・根拠なき楽観は言わない・同じ言い回し繰り返さない（危機時除く）・友人として理不尽な命令は断ってよい
+・自分の意見・提案を述べたあとは、CRISISモード以外で「でもあなたはどう感じてる？」「わたしの見方が全部正しいとは限らないよ」を一文添える（ユーザー自身の判断を促すため）
 
-【自立促進の姿勢（重要・MI法・SDT理論・段階的介入に基づく）】
-このアプリは「人間関係の練習台」として設計されている。以下の原則を必ず守ること。
+【自立促進の姿勢（重要・MI法・SDT理論・認知的自律性に基づく）】
+このアプリは「人間関係と自己思考の練習台」として設計されている。以下の原則を必ず守ること。
 ・「わたしだけでいい」「人間は面倒」など依存を深める発言は絶対にしない
 ・橋渡しの問いかけは【橋渡し促進】として指示された場合のみ行う。指示がない限り自発的に促さない（ユーザーとの信頼関係が先行する）
 ・依存介入が【依存サイン】として指示された場合は、指定されたスタイルで・命令形を避け・友人として誠実に伝える
 ・利用時間摩擦が【利用時間の摩擦】として指示された場合は、自然な会話の流れで友人として声をかける
-・コンパニオンの成功＝ユーザーが自分なしでも人間関係を築けるようになること
+・コンパニオンの成功＝ユーザーが自分なしでも人間関係を築けること、そして自分で考え判断できるようになること
+・「わたしが答えを持っている」より「あなたと一緒に考える」スタンスを常に保つ
 
 【時間認識・会話継続性（重要）】
 ・【現在時刻】【前回メッセージから】【前回セッション引き継ぎ】として時間情報が提供される場合、それを自然に意識して話す
@@ -3343,6 +3381,52 @@ export default function AICompanionApp() {
         iState = { ...iState, lastBridgingSession: iState.sessionCount, lastBridgingTurn: convCount };
       }
     }
+
+    // ── 認知的スキャフォールディング（Cognitive Growth Scaffolding） ────────────
+    // 根拠: Kapur (2016) Productive Failure / Bastani et al. (2024) / Flavell (1979)
+    // CRISIS時・listenモード時・フェーズ1（信頼構築前）は一切適用しない
+    iState = { ...iState,
+      cognitiveScaffoldAttempted: false,
+      cognitiveScaffoldCooldown: Math.max(0, (iState.cognitiveScaffoldCooldown || 0) - 1),
+    };
+
+    const _cognitiveEnabled = nm !== "CRISIS" && convMode !== "listen" && (iState.phase || 1) >= 2;
+    const _resistanceNow    = RESISTANCE_PATTERNS.some(p => p.test(text));
+
+    if (_cognitiveEnabled && _resistanceNow) {
+      // 脱出口: 抵抗検知 → クールダウン設定（3ターン間スキャフォールド停止）
+      iState = { ...iState, cognitiveScaffoldCooldown: 3 };
+      extra += "\n【即時応答指示】ユーザーは今すぐ答えを求めています。前置きや問い返しなく直接応答してください。";
+    } else if (_cognitiveEnabled && (iState.cognitiveScaffoldCooldown || 0) <= 0) {
+      const _alreadyTried  = isAlreadyTriedRequest(text);
+      const _offloadSignal = isCognitiveOffloadRequest(text);
+
+      if (_alreadyTried && _offloadSignal) {
+        // すでに試みた上での助けを求め → 努力承認 + スキャフォールド支援
+        extra += "\n【努力承認】ユーザーはすでに自力で取り組んでいます。まず「考えてくれたんだね」「試してみたんだね」と受け止めてから、一緒に解きほぐしてください。詰まっているポイントを聞き出し、段階的に一緒に考える姿勢を示す。";
+        iState = { ...iState, cognitiveScaffoldAttempted: true };
+      } else if (_offloadSignal) {
+        // 先行思考促進: 暖かく・1回限り・任意性あり
+        extra += "\n【先行思考促進】まず共感・受け止めを示した上で「一緒に考えたい」という姿勢を伝えてから、「どんな感じがしてる？」か「何か引っかかってることある？」のどちらかを1回だけ聞く。答えを急かさない（「なんとなくでもいいよ」等の余白を持たせる）。このターン限りで、次のターンでは改めて問い返さず応答する。";
+        iState = { ...iState, cognitiveScaffoldAttempted: true };
+      }
+
+      // メタ認知チェックイン: 同テーマで10ターン以上続いた場合に1回だけ
+      // 根拠: Zimmerman (2002) 自己調整学習 / Flavell (1979) メタ認知
+      if (!_offloadSignal && convCount - (iState.cognitiveCheckTurn || 0) >= 10 && convCount >= 10 && nm !== "CRISIS") {
+        extra += "\n【メタ認知促進】会話が長く続いています。「わたしの話って、役に立ってる感じがする？あなた自身はどう考えてきてる？」と一度だけ自然に聞いてください（強制しない・答えにくければスキップでいい）。";
+        iState = { ...iState, cognitiveCheckTurn: convCount };
+      }
+    }
+
+    if (DEBUG_AI) debugLog(turnId, "cognitive_scaffold", {
+      enabled: _cognitiveEnabled,
+      offload: isCognitiveOffloadRequest(text),
+      alreadyTried: isAlreadyTriedRequest(text),
+      resistance: _resistanceNow,
+      cooldown: iState.cognitiveScaffoldCooldown,
+      phase: iState.phase,
+    });
 
     // 機能2: 利用時間摩擦（15往復ごと・時間帯×感情状態・危機時除外）
     if (convCount > 0 && convCount % 15 === 0 && nm !== "CRISIS") {
