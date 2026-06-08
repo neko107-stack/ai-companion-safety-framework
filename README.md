@@ -22,6 +22,7 @@ user privacy, and ethical conversation — based on international standards.
 | **Honesty** | コンパニオンは誠実な感情を表現し、不当な命令を断る |
 | **Conversation Quality** | ICF / Adler / MI / CBT / GROW モデルに準拠した会話設計 |
 | **Anti-dependency** | AIへの過度な依存を検知し、人間関係への橋渡しを促す |
+| **Cognitive Autonomy** | 思考の丸投げを防ぎ、ユーザー自身の考える力を育てる（先行思考促進・メタ認知） |
 
 ---
 
