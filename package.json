@@ -27,6 +27,9 @@
   },
   "jest": {
     "testEnvironment": "jsdom",
+    "setupFiles": [
+      "<rootDir>/jest.setup.crypto.cjs"
+    ],
     "transform": {
       "^.+\\.[jt]sx?$": "babel-jest"
     },
