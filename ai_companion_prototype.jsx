@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, createElement } from "react";
 import { discoverModels, mergeModels } from "./src/ai/model-discovery.js";
+import { exportCompanionData, importCompanionData } from "./src/safety/encryption.js";
 
 // ━━━ 定数 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -381,8 +382,6 @@ function shouldShowAds(crisisLevel, mode, userTier = USER_TIER.BYOK) {
   return true;
 }
 
-const EXPORT_VERSION = "1.0";
-
 // ━━━ セッション時間認識システム（A〜E案） ━━━━━━━━━━━━━━━━━━━━━━━━━
 // A: 現在時刻・経過時間の注入
 // B: セッション引き継ぎコンテキスト（Session Handoff）
@@ -749,31 +748,8 @@ async function decryptData(b64, password) {
   const plain= await crypto.subtle.decrypt({name:"AES-GCM",iv:buf.slice(16,28)}, key, buf.slice(28));
   return new TextDecoder().decode(plain);
 }
-async function exportCompanionData(companion, profile, msgs, settings, password) {
-  // 長期記憶サマリーをエクスポートに含める
-  let longTermMemory = [];
-  try {
-    const raw = localStorage.getItem("aico_longTermMemory");
-    if (raw) longTermMemory = JSON.parse(raw);
-  } catch {}
-  const payload = JSON.stringify({
-    version:EXPORT_VERSION, exportedAt:new Date().toISOString(),
-    companion, profile, msgs, settings, longTermMemory,
-  });
-  const enc = await encryptData(payload, password);
-  return JSON.stringify({format:"aico-companion",v:EXPORT_VERSION,data:enc});
-}
-async function importCompanionData(jsonStr, password) {
-  const p = JSON.parse(jsonStr);
-  if (p.format !== "aico-companion") throw new Error("このファイルはコンパニオンデータではありません");
-  const data = JSON.parse(await decryptData(p.data, password));
-  // 長期記憶サマリーをlocalStorageに復元
-  if (data.longTermMemory && data.longTermMemory.length > 0) {
-    try { localStorage.setItem("aico_longTermMemory", JSON.stringify(data.longTermMemory)); } catch {}
-  }
-  return data;
-}
-
+// exportCompanionData / importCompanionData は src/safety/encryption.js に集約
+// （移行対象キーのアローリスト・復元ロジックを含む）。冒頭で import 済み。
 
 const INTERESTS = [
   {id:"science",label:"科学・テクノロジー",e:"🔬"},{id:"sf",label:"SF・ファンタジー",e:"🚀"},
@@ -2592,13 +2568,9 @@ function DataManagementSection({ companion, profile, msgs, S, ac }) {
     setImporting(true); setImStatus(null); setImMsg("");
     try {
       const text = await imFile.text();
-      const data = await importCompanionData(text, imPass);
-      const save = (k,v) => { try { localStorage.setItem("aico_"+k, JSON.stringify(v)); } catch {} };
-      if (data.companion) save("companion", data.companion);
-      if (data.profile)   save("profile",   data.profile);
-      if (data.msgs)      save("msgs",       data.msgs);
-      if (data.settings)  save("settings",   data.settings);
-      save("phase", "chat");
+      // importCompanionData が localStorage への全復元（レガシー項目＋進捗・状態系
+      // ＋フェーズ既定値）を担う。
+      await importCompanionData(text, imPass);
       setImStatus("ok"); setImMsg("インポート成功！ページを再読み込みします…");
       setTimeout(() => { try { window.location.href = window.location.href; } catch {} }, 1200);
     } catch(e) {
@@ -2623,7 +2595,7 @@ function DataManagementSection({ companion, profile, msgs, S, ac }) {
     createElement("div", {style:{background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:12,padding:"12px 14px",marginBottom:10}},
       createElement("div", {style:{fontSize:12,fontWeight:600,color:"#1E293B",marginBottom:4}}, "📦 エクスポート（暗号化バックアップ）"),
       createElement("div", {style:{fontSize:11,color:"#64748B",marginBottom:10,lineHeight:1.6}},
-        "プロファイル・会話履歴・設定をAES-256で暗号化して保存します。"
+        "プロファイル・会話履歴・設定・進捗・API設定をAES-256で暗号化して保存します。別の端末でも完全復元できます（APIキーの再利用には保管庫PINが別途必要）。"
       ),
       /* 保存先表示 */
       createElement("div", {style:{marginBottom:10}},
