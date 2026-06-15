@@ -3157,6 +3157,12 @@ export default function AICompanionApp() {
     }
   }, [showStartupVaultUnlock]);
 
+  useLayoutEffect(() => {
+    if (!showSettings && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [showSettings]);
+
   useEffect(() => {
     const raf = requestAnimationFrame(() => { isInitialLoad.current = false; });
     return () => cancelAnimationFrame(raf);
