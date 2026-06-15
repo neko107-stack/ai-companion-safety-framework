@@ -3119,6 +3119,7 @@ export default function AICompanionApp() {
   const isInitialLoad  = useRef(true);
   const isNearBottom   = useRef(true);
   const histRef        = useRef(lsGet("history", []));
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
 
 
   // ━━ 各 state の変化を自動保存 ━━
@@ -3144,6 +3145,7 @@ export default function AICompanionApp() {
     if (!scrollRef.current) return;
     if (isInitialLoad.current || isNearBottom.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      setShowScrollBtn(false);
       const timer = setTimeout(() => {
         if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
       }, 320);
@@ -4079,27 +4081,36 @@ export default function AICompanionApp() {
       )}
 
       {/* トランスクリプト */}
-      <div ref={scrollRef} onScroll={() => { if (scrollRef.current) { const { scrollTop, scrollHeight, clientHeight } = scrollRef.current; isNearBottom.current = scrollHeight - scrollTop - clientHeight < 80; }}} style={{flex:1,overflowY:"auto",padding:"14px 13px",display:"flex",flexDirection:"column",gap:11}}>
-        {msgs.map(m => (
-          <div key={m.id} style={{display:"flex",flexDirection:m.role==="user"?"row-reverse":"row",alignItems:"flex-end",gap:7,...(!isInitialLoad.current ? {animation:"si 0.3s ease"} : {})}}>
-            {m.role === "ai" && (
-              <div style={{width:26,height:26,borderRadius:"50%",background:ac.light,border:`1.5px solid ${modeAc}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,flexShrink:0}}>
-                {companion.emoji}
+      <div style={{position:"relative",flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
+        <div ref={scrollRef} onScroll={() => { if (scrollRef.current) { const { scrollTop, scrollHeight, clientHeight } = scrollRef.current; const nearBottom = scrollHeight - scrollTop - clientHeight < 80; isNearBottom.current = nearBottom; setShowScrollBtn(!nearBottom); }}} style={{flex:1,overflowY:"auto",padding:"14px 13px",display:"flex",flexDirection:"column",gap:11}}>
+          {msgs.map(m => (
+            <div key={m.id} style={{display:"flex",flexDirection:m.role==="user"?"row-reverse":"row",alignItems:"flex-end",gap:7,...(!isInitialLoad.current ? {animation:"si 0.3s ease"} : {})}}>
+              {m.role === "ai" && (
+                <div style={{width:26,height:26,borderRadius:"50%",background:ac.light,border:`1.5px solid ${modeAc}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,flexShrink:0}}>
+                  {companion.emoji}
+                </div>
+              )}
+              <div style={{maxWidth:"70%",background:m.role==="user"?ac.main:T.panel,border:m.role==="user"?"none":`1px solid ${T.panelBorder}`,borderRadius:m.role==="user"?"16px 4px 16px 16px":"4px 16px 16px 16px",padding:"9px 13px",fontSize:14,lineHeight:1.8,color:m.role==="user"?T.userText:T.aiText,whiteSpace:"pre-wrap",wordBreak:"break-word",boxShadow:m.role==="user"?"none":"0 1px 3px rgba(0,0,0,0.05)"}}>
+                {m.sa && <span style={{fontSize:11,color:ac.main,marginRight:5,fontWeight:700}}>✓ 設定変更</span>}
+                {m.text}
               </div>
-            )}
-            <div style={{maxWidth:"70%",background:m.role==="user"?ac.main:T.panel,border:m.role==="user"?"none":`1px solid ${T.panelBorder}`,borderRadius:m.role==="user"?"16px 4px 16px 16px":"4px 16px 16px 16px",padding:"9px 13px",fontSize:14,lineHeight:1.8,color:m.role==="user"?T.userText:T.aiText,whiteSpace:"pre-wrap",wordBreak:"break-word",boxShadow:m.role==="user"?"none":"0 1px 3px rgba(0,0,0,0.05)"}}>
-              {m.sa && <span style={{fontSize:11,color:ac.main,marginRight:5,fontWeight:700}}>✓ 設定変更</span>}
-              {m.text}
             </div>
-          </div>
-        ))}
-        {loading && (
-          <div style={{display:"flex",alignItems:"flex-end",gap:7}}>
-            <div style={{width:26,height:26,borderRadius:"50%",background:ac.light,border:`1.5px solid ${modeAc}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>{companion.emoji}</div>
-            <div style={{background:T.panel,border:`1px solid ${T.panelBorder}`,borderRadius:"4px 16px 16px 16px",padding:"10px 14px",display:"flex",gap:4,boxShadow:"0 1px 3px rgba(0,0,0,0.05)"}}>
-              {[0,1,2].map(i => <div key={i} style={{width:6,height:6,borderRadius:"50%",background:modeAc,opacity:0.6,animation:`bo 1.2s ${i*0.2}s infinite`}} />)}
+          ))}
+          {loading && (
+            <div style={{display:"flex",alignItems:"flex-end",gap:7}}>
+              <div style={{width:26,height:26,borderRadius:"50%",background:ac.light,border:`1.5px solid ${modeAc}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>{companion.emoji}</div>
+              <div style={{background:T.panel,border:`1px solid ${T.panelBorder}`,borderRadius:"4px 16px 16px 16px",padding:"10px 14px",display:"flex",gap:4,boxShadow:"0 1px 3px rgba(0,0,0,0.05)"}}>
+                {[0,1,2].map(i => <div key={i} style={{width:6,height:6,borderRadius:"50%",background:modeAc,opacity:0.6,animation:`bo 1.2s ${i*0.2}s infinite`}} />)}
+              </div>
             </div>
-          </div>
+          )}
+        </div>
+        {showScrollBtn && (
+          <button
+            onClick={() => { if (scrollRef.current) { scrollRef.current.scrollTop = scrollRef.current.scrollHeight; setShowScrollBtn(false); } }}
+            style={{position:"absolute",bottom:12,right:16,width:36,height:36,borderRadius:"50%",border:`1.5px solid ${ac.main}40`,background:T.panel,color:ac.main,cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px rgba(0,0,0,0.12)",opacity:0.92,transition:"opacity 0.2s",zIndex:10}}
+            title="最新のメッセージへ"
+          >↓</button>
         )}
       </div>
 
