@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> コードの処理内容を関数レベルで一望するには `CODE_OVERVIEW.md` を参照（モジュール一覧・処理フロー図・関数サマリ）。
+
 ## Commands
 
 ```bash
