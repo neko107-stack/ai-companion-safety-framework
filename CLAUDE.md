@@ -12,7 +12,7 @@ npm run build        # 本番ビルド → dist/
 npm run preview      # ビルド成果物をローカルプレビュー
 npm test             # 全テスト実行（Jest + jsdom）
 npm run test:watch   # テストウォッチモード
-npm run lint         # ESLint (src/**/*.{js,jsx})
+npm run lint         # ESLint (src/**/*.{js,jsx})　※eslint.config.js + ESLint 9（flat config）
 
 # 単一テストファイルを実行
 node --experimental-vm-modules node_modules/.bin/jest src/safety/crisis-detection.test.js
@@ -29,10 +29,10 @@ node --experimental-vm-modules node_modules/.bin/jest --testNamePattern="CRITICA
 
 | 層 | パス | 役割 |
 |----|------|------|
-| モノリシック原型 | `ai_companion_prototype.jsx` (231KB) | 参照用プロトタイプ。機能追加はしない |
-| モジュール実装 | `src/` | 本番コード。こちらを編集する |
+| モノリシック原型 | `ai_companion_prototype.jsx` (約4,100行) | **現在も稼働コードの本体**（UI・`sendMessage()`・介入状態管理 + ロジックの重複コピー） |
+| モジュール実装 | `src/` | 正規モジュール（テスト対象）。ここへの一本化を進行中 |
 
-`src/` 以下が正規の実装。`ai_companion_prototype.jsx` は仕様参照用であり、通常の開発では**読まなくてよい**。
+> ⚠ **二重実装の移行途上**: `src/main.jsx` は prototype の `AICompanionApp` を描画しており、prototype は危機検知・プロンプト生成・AI呼び出し等のロジックを**内部に重複コピー**として持つ。`src/` の該当モジュールを修正しても、prototype 側の対応箇所を置換するまで稼働アプリには反映されない。一本化の手順と進捗は `PROJECT_REVIEW.md` §4.2 を参照。ロジックを変更する際は**両方の実装を確認**すること。
 
 ### `src/` モジュール構成と依存関係
 
@@ -69,8 +69,8 @@ src/
 
 ### データフロー
 
-- **APIキー**: `sessionStorage` に保存（タブを閉じると自動消去）
-- **会話・設定**: `localStorage` に AES-256-GCM（`src/safety/encryption.js`）で暗号化保存
+- **APIキー**: `sessionStorage` に保存（タブを閉じると自動消去）。永続保管を選んだ場合は PIN で暗号化した `aico_apiKeyVault` に保存
+- **会話・設定**: `localStorage` に**平文 JSON** で保存（`aico_msgs` 等）。AES-256-GCM（`src/safety/encryption.js`）が使われるのは**手動エクスポート/インポートと API キーボルトのみ**。保存時暗号化は改善ロードマップ P2（`PROJECT_REVIEW.md` §6）
 - **長期記憶**: `aico_longTermMemory` キーに最大200件。`calcCertainty()` が会話数の経過（elapsed）に応じてスコアを 1.0→0.8→0.6→0.4 に減衰させる
 - **エラーログ**: `aico_errorlog` キーに最大200件。会話内容・APIキー・個人情報は**絶対に含めない**
 
@@ -124,7 +124,7 @@ C-SSRS準拠の4層アーキテクチャ。`detectCrisisFull()` が L1+L2+L3 の
 
 ## トークン節約のための規約
 
-- `ai_companion_prototype.jsx` は 231KB のモノリシックファイル。**読む前に `src/` を確認する**。対応するモジュールが `src/` にあれば `src/` を読む
+- `ai_companion_prototype.jsx` は約4,100行のモノリシックファイル。**読む前に `src/` を確認する**。ただし二重実装の移行が終わるまで、ロジック変更時は prototype 内の重複コピーの有無も必ず確認する（`PROJECT_REVIEW.md` §4.2）
 - ファイル全体が不要なら `offset`/`limit` を使って必要な行だけ読む
 - 定数の確認は `src/constants/index.js` 1ファイルで完結する
 - API呼び出しの実装を確認するなら `src/ai/engines.js` のみ読めば足りる（`api/chat.js` はサーバー側プロキシで別物）
