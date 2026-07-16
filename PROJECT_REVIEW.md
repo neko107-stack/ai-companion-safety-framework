@@ -197,9 +197,9 @@
 
 | 優先度 | 施策 | 内容 | コスト |
 |--------|------|------|--------|
-| **P0** | ドキュメントから虚偽をなくす | 暗号化記述の訂正（README / SAFETY_FRAMEWORK §4 / CLAUDE.md）、SAFETY_FRAMEWORK §3 冒頭の実装状況同期、README の docx バージョン修正、CLAUDE.md に「稼働コードは prototype 内」と実態明記 | 小（コード変更なし） |
-| **P1** | 二重実装の解消 | §4.2 (ii) の4フェーズ。crisis-detection から着手、1モジュール=1PR | 中 |
-| **P1** | 稼働コードの暫定テスト | E2E スモーク1本（危機語→ホットライン表示）で移行作業中の安全網を確保 | 小 |
+| **P0** | ✅ ドキュメントから虚偽をなくす | 暗号化記述の訂正（README / SAFETY_FRAMEWORK §4 / CLAUDE.md）、SAFETY_FRAMEWORK §3 冒頭の実装状況同期、README の docx バージョン修正、CLAUDE.md に「稼働コードは prototype 内」と実態明記 — **対応済み** | 小（コード変更なし） |
+| **P1** | 二重実装の解消（進行中） | §4.2 (ii) の4フェーズ。**完了: logger / 定数 / 記憶系純粋関数**（`generateLTMSummary` は prototype 版 callAI の llama 依存のため engines と同時に移行）。**残り: encryption → engines → crisis-detection → prompt**。lint 復旧済み（ESLint 9 flat config）が置換ミスの安全網として機能 | 中 |
+| **P1** | 稼働コードの暫定テスト | E2E スモーク1本（危機語→ホットライン表示）で移行作業中の安全網を確保（描画スモークは実施済み） | 小 |
 | **P2** | 保存時暗号化の実装 | `lsSet`/`lsGet` の暗号化ラッパー化（API キーボルトの PIN 基盤を流用）+ 脅威モデル明文化 | 中 |
 | **P2** | L4 接続・HOTLINES 一元化・lint 復旧・モデル定数最新化 | §4.1 #3, #4, #7 / §5-2 | 小〜中 |
 | **P3** | 検知精度の定量評価 | 日本語危機表現テストセット作成、感度・特異度の公表（§3.4）。「検証データを公開する唯一の安全フレームワーク」へ | 中 |
