@@ -3,6 +3,7 @@ import { discoverModels, mergeModels } from "./src/ai/model-discovery.js";
 import { exportCompanionData, importCompanionData } from "./src/safety/encryption.js";
 import { APP_VERSION, ERR, classifyApiError, recordLog, getLogs, exportLogs, clearLogs } from "./src/utils/logger.js";
 import { INTERESTS, VOICES, THEMES, ACCENTS, AI_ENGINES } from "./src/constants/index.js";
+import { getLongTermMemory, calcCertainty, certaintyLabel, detectPinRequest } from "./src/ai/memory.js";
 
 // ━━━ 定数 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -840,42 +841,10 @@ async function callAI(engineId, model, apiKey, systemPrompt, messages, phase = "
 
 // ━━━ 長期記憶サマリー生成 ━━━
 
-function getLongTermMemory() {
-  try {
-    const raw = localStorage.getItem("aico_longTermMemory");
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
-
-// 確実性スコアを計算する（時間減衰を適用）
-function calcCertainty(entry, currentConvCount) {
-  if (entry.pinned) return 5; // ピン留めは常に5
-  const base = entry.certainty ?? 3;
-  const elapsed = currentConvCount - (entry.last_mentioned_count ?? entry.conv_count ?? 0);
-  let decay = 1.0;
-  if (elapsed > 300) decay = 0.4;
-  else if (elapsed > 100) decay = 0.6;
-  else if (elapsed > 20)  decay = 0.8;
-  return Math.max(0, Math.min(5, Math.round(base * decay)));
-}
-
-// 確実性スコアに応じたラベルを返す
-function certaintyLabel(score) {
-  if (score >= 5) return "確実（5）";
-  if (score === 4) return "やや確か（4）";
-  if (score === 3) return "曖昧（3）";
-  if (score === 2) return "不確か（2）";
-  if (score === 1) return "断片（1）";
-  return null; // 0はプロンプトに含めない（忘却）
-}
-
-// ピン留め検出（ユーザーの発話から）
-function detectPinRequest(text) {
-  return /覚えておいて|絶対忘れないで|ピン留め|必ず覚えて/.test(text);
-}
-function detectUnpinRequest(text) {
-  return /忘れていい|覚えなくていい|それはいい/.test(text);
-}
+// getLongTermMemory / calcCertainty / certaintyLabel / detectPinRequest は
+// src/ai/memory.js に一本化済み（冒頭の import を参照。detectUnpinRequest も src 側にある）。
+// generateLTMSummary のみ、prototype 版 callAI（llama対応・options付き）に依存するため
+// engines.js の一本化（PROJECT_REVIEW.md §4.2 ステージ3）と同時に src へ移行する。
 
 async function generateLTMSummary(engineId, model, apiKey, companion, profile, recentMsgs, options = {}) {
   const userMsgs = recentMsgs.filter(m => m.role === "user").map(m => m.text).slice(-20).join("\n");
