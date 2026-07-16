@@ -18,7 +18,7 @@ user privacy, and ethical conversation — based on international standards.
 | 原則 | 内容 |
 |------|------|
 | **Safety First** | コミュニティ安全機能（Layer 1/2/3✅ Phase 2実装済み・Layer 0/4〜5はPhase 3〜4で実装予定）・即時ホットライン案内 |
-| **Privacy** | 会話データは完全ローカル保存（AES-256-GCM暗号化） |
+| **Privacy** | 会話データはローカル保存のみ・当方サーバーには保存しない（保存時暗号化はロードマップP2。現状の暗号化はエクスポート/APIキー保管時） |
 | **Honesty** | コンパニオンは誠実な感情を表現し、不当な命令を断る |
 | **Conversation Quality** | ICF / Adler / MI / CBT / GROW モデルに準拠した会話設計 |
 | **Anti-dependency** | AIへの過度な依存を検知し、人間関係への橋渡しを促す |
@@ -33,7 +33,7 @@ user privacy, and ethical conversation — based on international standards.
 | [`SAFETY_FRAMEWORK.md`](./SAFETY_FRAMEWORK.md) | 安全設計フレームワーク全文（英語・詳細） |
 | [`ai_companion_prototype.jsx`](./ai_companion_prototype.jsx) | Reactプロトタイプ（localStorage + Web Crypto API） |
 | [`crisis-detection.test.js`](./crisis-detection.test.js) | 危機検知ロジックのユニットテスト（Jest） |
-| `AIコンパニオンアプリ_システム設計仕様書.docx` | システム設計仕様書 v2.7（日本語） |
+| `AIコンパニオンアプリ_システム設計仕様書.docx` | システム設計仕様書 v3.8（日本語） |
 
 ---
 
@@ -110,9 +110,9 @@ npx jest crisis-detection.test.js
 
 ## Security Design / セキュリティ設計
 
-- **APIキー**: `sessionStorage` に保存（タブを閉じると自動消去）
-- **会話データ**: `localStorage` に AES-256-GCM で暗号化保存
-- **エクスポート**: PBKDF2-SHA256（100,000回）でパスワード保護
+- **APIキー**: `sessionStorage` に保存（タブを閉じると自動消去）。永続保管を選んだ場合は PIN で AES-256-GCM 暗号化した鍵ボルトに保存
+- **会話データ**: `localStorage` にローカル保存のみ・外部サーバーには保存しない（**現状は平文保存**。保存時暗号化はロードマップ P2 で対応予定）。なお応答生成のため、会話は選択した AI プロバイダー（またはホスト型プランではプロキシ経由）に送信される
+- **エクスポート**: AES-256-GCM + PBKDF2-SHA256（100,000回）でパスワード保護
 - **エラーログ**: 会話内容・APIキー・個人情報を含まない設計
 - **Gemini利用者**: Google Cloud Console でAPIキーのオリジン制限を推奨
 
