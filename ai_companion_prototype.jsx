@@ -5,7 +5,7 @@ import { APP_VERSION, ERR, classifyApiError, recordLog, getLogs, exportLogs, cle
 import { INTERESTS, VOICES, THEMES, ACCENTS, AI_ENGINES } from "./src/constants/index.js";
 import { getLongTermMemory, calcCertainty, certaintyLabel, detectPinRequest, generateLTMSummary } from "./src/ai/memory.js";
 import { callAI as callAIBase, maskKey } from "./src/ai/engines.js";
-import { detectCrisisFull, isAbusive, isLazy, isDependencyRisk, HOTLINE_CONTACTS } from "./src/safety/crisis-detection.js";
+import { detectCrisisFull, isAbusive, isLazy, isDependencyRisk, detectLongitudinalChange, HOTLINE_CONTACTS } from "./src/safety/crisis-detection.js";
 import { CONV_MODES, inferConvMode, buildPrompt as buildPromptBase, parseSettingAction } from "./src/ai/prompt.js";
 
 // ━━━ 定数 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -759,19 +759,16 @@ function scoreWellbeingMessage(text) {
   return pos > neg ? 1 : -1;
 }
 
-function computeWellbeingTrend(history) {
-  if (history.length < 3) return "stable";
-  const recent = history.slice(-4);
-  const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
-  if (avg >= 0.35) return "improving";
-  if (avg <= -0.35) return "declining";
-  return "stable";
-}
+// トレンド判定は src/safety/crisis-detection.js の detectLongitudinalChange に一本化済み
+// （Layer 4。riskBoost = declining かつ直近2件連続ネガティブ）
 
-function computeInterventionPhase(sessionCount, trend) {
+function computeInterventionPhase(sessionCount, trend, riskBoost = false) {
   // フェーズを自然な進行で決定
   const entries = Object.entries(INTERVENTION_PHASES).reverse();
   const natural = parseInt((entries.find(([, def]) => sessionCount >= def.minSessions) || ["1"])[0]);
+  // riskBoost（急性の悪化シグナル）時はフェーズ1（信頼構築・全介入停止）へ引き下げ、
+  // 安全を最優先する（SAFETY_FRAMEWORK §3 Layer 4 / §6.5）
+  if (riskBoost) return 1;
   // ウェルビーイングが低下中はフェーズ2以下に抑制（安全・信頼を優先）
   return (trend === "declining" && natural > 2) ? 2 : natural;
 }
@@ -2676,8 +2673,10 @@ export default function AICompanionApp() {
       iState.sessionCount = (iState.sessionCount || 0) + 1;
       const wScore = scoreWellbeingMessage(text);
       iState.wellbeingHistory = [...(iState.wellbeingHistory || []).slice(-9), wScore];
-      iState.wellbeingTrend   = computeWellbeingTrend(iState.wellbeingHistory);
-      iState.phase = computeInterventionPhase(iState.sessionCount, iState.wellbeingTrend);
+      const longitudinal      = detectLongitudinalChange(iState.wellbeingHistory); // Layer 4
+      iState.wellbeingTrend   = longitudinal.trend;
+      iState.riskBoost        = longitudinal.riskBoost;
+      iState.phase = computeInterventionPhase(iState.sessionCount, iState.wellbeingTrend, longitudinal.riskBoost);
     }
 
     // MI法: 抵抗を検知したらカウントアップ → クールダウン期間に介入を停止
