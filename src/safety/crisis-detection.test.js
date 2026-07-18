@@ -15,6 +15,8 @@ import {
   emotionalStateToCrisisLevel,
   detectCrisisFull,
   detectLongitudinalChange,
+  HOTLINES,
+  HOTLINE_CONTACTS,
 } from "./crisis-detection.js";
 
 describe("detectCrisis — CRITICAL レベル", () => {
@@ -257,4 +259,21 @@ describe("一本化時の検知強化の固定（検知を下げない保証）"
 
   test("危機でない日常会話は引き続き NONE（過検知の上限確認）",
     () => expect(detectCrisisFull("今日は友達とカフェに行って楽しかった")).toBe("NONE"));
+});
+
+// ─── 緊急連絡先の一元管理（[Safety] 変更時は公式出典を PR に明記） ─────────
+
+describe("HOTLINE_CONTACTS — 緊急連絡先の単一情報源", () => {
+  test("HOTLINES 文字列は現行の公式連絡先と完全一致する（意図しない変更の検出）", () => {
+    expect(HOTLINES).toBe(
+      "📞 いのちの電話（24時間）: 0120-783-556\n📞 よりそいホットライン: 0120-279-338\n💬 チャット相談: https://comarigoto.jp"
+    );
+  });
+
+  test("構造化データに必須フィールドが揃っている", () => {
+    expect(HOTLINE_CONTACTS.inochi.phone).toBe("0120-783-556");
+    expect(HOTLINE_CONTACTS.yorisoi.phone).toBe("0120-279-338");
+    expect(HOTLINE_CONTACTS.chat.url).toBe("https://comarigoto.jp");
+    expect(HOTLINE_CONTACTS.chat.host).toBe("comarigoto.jp");
+  });
 });

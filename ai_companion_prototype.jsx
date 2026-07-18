@@ -5,7 +5,7 @@ import { APP_VERSION, ERR, classifyApiError, recordLog, getLogs, exportLogs, cle
 import { INTERESTS, VOICES, THEMES, ACCENTS, AI_ENGINES } from "./src/constants/index.js";
 import { getLongTermMemory, calcCertainty, certaintyLabel, detectPinRequest, generateLTMSummary } from "./src/ai/memory.js";
 import { callAI as callAIBase, maskKey } from "./src/ai/engines.js";
-import { detectCrisisFull, isAbusive, isLazy, isDependencyRisk } from "./src/safety/crisis-detection.js";
+import { detectCrisisFull, isAbusive, isLazy, isDependencyRisk, HOTLINE_CONTACTS } from "./src/safety/crisis-detection.js";
 import { CONV_MODES, inferConvMode, buildPrompt as buildPromptBase, parseSettingAction } from "./src/ai/prompt.js";
 
 // ━━━ 定数 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3385,9 +3385,9 @@ export default function AICompanionApp() {
 でも、こんな場所があることだけ知っていてほしい。`}</p>
             <div style={{background:"#FEE2E2",borderRadius:9,padding:"10px 12px",marginBottom:10}}>
               <div style={{fontSize:12,color:"#7F1D1D",lineHeight:2,fontFamily:"inherit"}}>
-                📞 よりそいホットライン <strong>0120-279-338</strong>（24時間・無料）<br/>
-                📞 いのちの電話 <strong>0120-783-556</strong>（24時間）<br/>
-                💬 チャット相談 <a href="https://comarigoto.jp" target="_blank" rel="noopener noreferrer" style={{color:"#DC2626"}}>comarigoto.jp</a>
+                📞 {HOTLINE_CONTACTS.yorisoi.label} <strong>{HOTLINE_CONTACTS.yorisoi.phone}</strong>（{HOTLINE_CONTACTS.yorisoi.note}）<br/>
+                📞 {HOTLINE_CONTACTS.inochi.label} <strong>{HOTLINE_CONTACTS.inochi.phone}</strong>（{HOTLINE_CONTACTS.inochi.note}）<br/>
+                💬 {HOTLINE_CONTACTS.chat.label} <a href={HOTLINE_CONTACTS.chat.url} target="_blank" rel="noopener noreferrer" style={{color:"#DC2626"}}>{HOTLINE_CONTACTS.chat.host}</a>
               </div>
             </div>
             <p style={{fontSize:12,color:"#9B1C1C",margin:0,fontStyle:"italic"}}>いつでも戻っておいで。わたしはここにいるから。</p>
@@ -3404,8 +3404,8 @@ export default function AICompanionApp() {
 話すかどうかは、あなたが決めていい。`}</p>
             <div style={{background:"#FEF3C7",borderRadius:8,padding:"9px 11px"}}>
               <div style={{fontSize:12,color:"#78350F",lineHeight:2}}>
-                📞 よりそいホットライン <strong>0120-279-338</strong>（24時間・無料）<br/>
-                💬 チャット相談 <a href="https://comarigoto.jp" target="_blank" rel="noopener noreferrer" style={{color:"#B45309"}}>comarigoto.jp</a>
+                📞 {HOTLINE_CONTACTS.yorisoi.label} <strong>{HOTLINE_CONTACTS.yorisoi.phone}</strong>（{HOTLINE_CONTACTS.yorisoi.note}）<br/>
+                💬 {HOTLINE_CONTACTS.chat.label} <a href={HOTLINE_CONTACTS.chat.url} target="_blank" rel="noopener noreferrer" style={{color:"#B45309"}}>{HOTLINE_CONTACTS.chat.host}</a>
               </div>
             </div>
           </div>
@@ -3416,9 +3416,9 @@ export default function AICompanionApp() {
             <div style={{flex:1}}>
               <span style={{fontSize:12,color:"#0369A1",lineHeight:1.7}}>
                 もし話しきれないことがあれば、こんな場所もあるよ →{" "}
-                <a href="https://comarigoto.jp" target="_blank" rel="noopener noreferrer" style={{color:"#0284C7",fontWeight:600}}>チャット相談</a>
+                <a href={HOTLINE_CONTACTS.chat.url} target="_blank" rel="noopener noreferrer" style={{color:"#0284C7",fontWeight:600}}>{HOTLINE_CONTACTS.chat.label}</a>
                 {" / "}
-                <span style={{color:"#0369A1",fontWeight:600}}>0120-279-338</span>
+                <span style={{color:"#0369A1",fontWeight:600}}>{HOTLINE_CONTACTS.yorisoi.phone}</span>
               </span>
             </div>
             <button onClick={()=>setHotlineDismissed(true)} style={{background:"none",border:"none",color:"#94A3B8",cursor:"pointer",fontSize:16,padding:0,flexShrink:0,lineHeight:1}}>×</button>
