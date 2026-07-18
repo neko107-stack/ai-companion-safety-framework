@@ -29,10 +29,10 @@ node --experimental-vm-modules node_modules/.bin/jest --testNamePattern="CRITICA
 
 | 層 | パス | 役割 |
 |----|------|------|
-| モノリシック原型 | `ai_companion_prototype.jsx` (約4,100行) | **現在も稼働コードの本体**（UI・`sendMessage()`・介入状態管理 + ロジックの重複コピー） |
-| モジュール実装 | `src/` | 正規モジュール（テスト対象）。ここへの一本化を進行中 |
+| UI・オーケストレーション | `ai_companion_prototype.jsx` (約3,500行) | 稼働アプリの本体（UI・`sendMessage()`・介入状態管理）。コアロジックは `src/` から import する |
+| モジュール実装 | `src/` | **正規モジュール（テスト対象）。ロジックの変更はここで行う** |
 
-> ⚠ **二重実装の移行途上**: `src/main.jsx` は prototype の `AICompanionApp` を描画しており、prototype は危機検知・プロンプト生成・AI呼び出し等のロジックを**内部に重複コピー**として持つ。`src/` の該当モジュールを修正しても、prototype 側の対応箇所を置換するまで稼働アプリには反映されない。一本化の手順と進捗は `PROJECT_REVIEW.md` §4.2 を参照。ロジックを変更する際は**両方の実装を確認**すること。
+> ✅ **二重実装は解消済み**: 危機検知・プロンプト生成・AI呼び出し・暗号化・記憶・ロガー・定数はすべて `src/` に一本化され、prototype は import して使う。`src/` の修正はそのまま稼働アプリに反映される。例外は開発用の2つのアダプタ（`callAI` / `buildPrompt`。`DEBUG_AI` フラグを注入するだけの薄いラッパー）で、AI判断ログのセクションをリリース時に削除する際に一緒に除去する。
 
 ### `src/` モジュール構成と依存関係
 
@@ -124,7 +124,7 @@ C-SSRS準拠の4層アーキテクチャ。`detectCrisisFull()` が L1+L2+L3 の
 
 ## トークン節約のための規約
 
-- `ai_companion_prototype.jsx` は約4,100行のモノリシックファイル。**読む前に `src/` を確認する**。ただし二重実装の移行が終わるまで、ロジック変更時は prototype 内の重複コピーの有無も必ず確認する（`PROJECT_REVIEW.md` §4.2）
+- `ai_companion_prototype.jsx` は約3,500行のモノリシックファイル（UI・オーケストレーション）。コアロジックは `src/` に一本化済みなので、**ロジックの確認・変更は `src/` だけで完結する**
 - ファイル全体が不要なら `offset`/`limit` を使って必要な行だけ読む
 - 定数の確認は `src/constants/index.js` 1ファイルで完結する
 - API呼び出しの実装を確認するなら `src/ai/engines.js` のみ読めば足りる（`api/chat.js` はサーバー側プロキシで別物）
