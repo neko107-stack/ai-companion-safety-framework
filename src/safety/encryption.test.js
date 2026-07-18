@@ -3,6 +3,7 @@ import {
   collectMigratable,
   applyMigratable,
   encryptData,
+  decryptData,
   exportCompanionData,
   importCompanionData,
   EXPORT_VERSION,
@@ -100,6 +101,21 @@ describe("export → import ラウンドトリップ", () => {
   test("非コンパニオンファイルは拒否する", async () => {
     const bogus = JSON.stringify({ format: "something-else", data: "x" });
     await expect(importCompanionData(bogus, PW)).rejects.toThrow();
+  });
+});
+
+describe("encryptData / decryptData", () => {
+  test("小データのラウンドトリップ", async () => {
+    const enc = await encryptData("こんにちは", PW);
+    expect(await decryptData(enc, PW)).toBe("こんにちは");
+  });
+
+  test("大データ（>256KB・チャンクbtoa経路）のラウンドトリップ", async () => {
+    // 8KBチャンク処理がないと String.fromCharCode(...buf) の spread が
+    // コールスタック上限を超えて RangeError になるサイズ
+    const big = "長い会話ログ。".repeat(40000); // 約280KB（UTF-8）
+    const enc = await encryptData(big, PW);
+    expect(await decryptData(enc, PW)).toBe(big);
   });
 });
 

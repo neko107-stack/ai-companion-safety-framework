@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, createElement } from "react";
 import { discoverModels, mergeModels } from "./src/ai/model-discovery.js";
-import { exportCompanionData, importCompanionData } from "./src/safety/encryption.js";
+import { encryptData, decryptData, exportCompanionData, importCompanionData } from "./src/safety/encryption.js";
 import { APP_VERSION, ERR, classifyApiError, recordLog, getLogs, exportLogs, clearLogs } from "./src/utils/logger.js";
 import { INTERESTS, VOICES, THEMES, ACCENTS, AI_ENGINES } from "./src/constants/index.js";
 import { getLongTermMemory, calcCertainty, certaintyLabel, detectPinRequest } from "./src/ai/memory.js";
@@ -635,42 +635,9 @@ const DEBUG_PROMPT_APPEND = `
 ・設定変更アクション {"action":"set_setting",...} が必要なときは <response> 内に通常通り含める。
 ・タグの綴り・順序を厳守する。<thinking> の前に何も書かない。`;
 
-// ━━━ 暗号化ユーティリティ（Web Crypto API） ━━━
-// AES-256-GCM + PBKDF2-SHA256（100,000回）
-// ※ NIST SP 800-132（2023）はSHA-256で最低600,000回を推奨。
-//    Phase 4セキュリティ監査時に引き上げを検討する（既存エクスポートの後方互換性に注意）。
-
-async function deriveKey(password, salt) {
-  const enc = new TextEncoder();
-  const mat = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey(
-    { name:"PBKDF2", salt, iterations:100000, hash:"SHA-256" },
-    mat, { name:"AES-GCM", length:256 }, false, ["encrypt","decrypt"]
-  );
-}
-async function encryptData(plaintext, password) {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv   = crypto.getRandomValues(new Uint8Array(12));
-  const key  = await deriveKey(password, salt);
-  const ct   = await crypto.subtle.encrypt({name:"AES-GCM",iv}, key, new TextEncoder().encode(plaintext));
-  const buf  = new Uint8Array(28 + ct.byteLength);
-  buf.set(salt,0); buf.set(iv,16); buf.set(new Uint8Array(ct),28);
-  // チャンク処理：大きいバッファを一度にspreadするとコールスタックを超えるため8KB単位で処理
-  let binary = "";
-  const chunk = 8192;
-  for (let i = 0; i < buf.length; i += chunk) {
-    binary += String.fromCharCode(...buf.subarray(i, i + chunk));
-  }
-  return btoa(binary);
-}
-async function decryptData(b64, password) {
-  const buf  = Uint8Array.from(atob(b64), c=>c.charCodeAt(0));
-  const key  = await deriveKey(password, buf.slice(0,16));
-  const plain= await crypto.subtle.decrypt({name:"AES-GCM",iv:buf.slice(16,28)}, key, buf.slice(28));
-  return new TextDecoder().decode(plain);
-}
-// exportCompanionData / importCompanionData は src/safety/encryption.js に集約
-// （移行対象キーのアローリスト・復元ロジックを含む）。冒頭で import 済み。
+// ━━━ 暗号化ユーティリティ ━━━
+// encryptData / decryptData / exportCompanionData / importCompanionData は
+// src/safety/encryption.js に一本化済み（冒頭の import を参照）。
 
 // 定数（INTERESTS/VOICES/THEMES/ACCENTS/AI_ENGINES）は src/constants/index.js に一本化済み（冒頭の import を参照）
 
