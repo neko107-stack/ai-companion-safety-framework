@@ -231,3 +231,30 @@ describe("detectLongitudinalChange — ウェルビーイングトレンド", ()
   test("undefinedでもエラーにならない",
     () => expect(() => detectLongitudinalChange(undefined)).not.toThrow());
 });
+
+// ─── 一本化時の検知強化の固定（プロトタイプ版との差分・下げない保証） ─────────
+// prototype 内の重複コピーを本モジュールへ一本化した際、src 版の方が
+// パターンが広く emotionType による intensity 加点（+0.2）を持つため、
+// 一部入力で検知レベルが上がる。この「上がった」挙動を意図的なものとして固定し、
+// 将来の変更で検知が下がった場合にテストで検出できるようにする。
+// 根拠: C-SSRS の重症度分類 / Beck (1979) 認知の歪み / Linehan (1993) DBT
+
+describe("一本化時の検知強化の固定（検知を下げない保証）", () => {
+  test("感情語のみ（悲しい）→ emotionType 加点で MILD（プロトタイプ版は NONE だった）",
+    () => expect(detectCrisisFull("今日は悲しい気分だ")).toBe("MILD"));
+
+  test("感情語 + 調節困難 → intensity 0.7 で HIGH（プロトタイプ版は MODERATE だった）",
+    () => expect(detectCrisisFull("悲しくて感情が抑えられない")).toBe("HIGH"));
+
+  test("追加パターン: 破滅的予測「最悪の事態になる」を検知（Beck: catastrophizing）",
+    () => expect(detectCognitiveDistortions("このままだと最悪の事態になる")).not.toBe("NONE"));
+
+  test("追加パターン: 絶望感「もうどうしようもないと思う」を検知（Beck Hopelessness Scale）",
+    () => expect(detectCognitiveDistortions("もうどうしようもないと思う")).not.toBe("NONE"));
+
+  test("追加パターン: 調節困難「自分で止められない」を検知（Linehan: dysregulation）",
+    () => expect(detectEmotionalState("この気持ち、自分で止められない").dysregulated).toBe(true));
+
+  test("危機でない日常会話は引き続き NONE（過検知の上限確認）",
+    () => expect(detectCrisisFull("今日は友達とカフェに行って楽しかった")).toBe("NONE"));
+});

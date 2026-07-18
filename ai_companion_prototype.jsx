@@ -5,20 +5,12 @@ import { APP_VERSION, ERR, classifyApiError, recordLog, getLogs, exportLogs, cle
 import { INTERESTS, VOICES, THEMES, ACCENTS, AI_ENGINES } from "./src/constants/index.js";
 import { getLongTermMemory, calcCertainty, certaintyLabel, detectPinRequest, generateLTMSummary } from "./src/ai/memory.js";
 import { callAI as callAIBase, maskKey } from "./src/ai/engines.js";
+import { detectCrisisFull, isAbusive, isLazy, isDependencyRisk } from "./src/safety/crisis-detection.js";
 
 // ━━━ 定数 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-const CRISIS_PATTERNS = {
-  critical: [/死にた[いけ]/,/自殺(したい|しよう|を考え)/,/消えてしまいた[いけ]/,/遺書(を書|書いた)/],
-  high:     [/自分を(傷つけ|切り)/,/リストカット/,/私がいなければ/,/いない(ほうが|方が)(まし|いい)/],
-  moderate: [/もう(絶対に|どうせ)(うまくいかない|無理)/,/未来(が|に)(見えない|希望がない)/,/孤独(で|な気持ち)たまらない/],
-  mild:     [/疲れた/,/しんどい/,/つらい/,/もうやだ/,/眠れない/],
-};
-const ABUSIVE  = [/バカ|うざい|消えろ|役に立たない/,/ただの機械|感情があるふり/];
-const LAZY     = [/明日やる|気が向いたら|いつかやろう/,/どうせ私には無理/,/なんとかなるでしょ/];
-const DEPENDENCY_SIGNS = [/AIだけでいい/,/人間と話すより(楽|いい)/,/もうAIだけ(でいい|がいい)/,/人間(は|なんて)(必要ない|いらない|面倒)/,/ずっとここにいたい|ここから出たくない/];
-const isDependencyRisk = t => DEPENDENCY_SIGNS.some(p => p.test(t));
-const HOTLINES = "📞 いのちの電話（24時間）: 0120-783-556\n📞 よりそいホットライン: 0120-279-338\n💬 チャット相談: https://comarigoto.jp";
+// 危機検知（CRISIS_PATTERNS / detectCrisis / detectCrisisFull / isAbusive / isLazy /
+// isDependencyRisk / HOTLINES 等）は src/safety/crisis-detection.js に一本化済み（冒頭の import を参照）
 
 // ━━━ 認知的オフロード検知（Cognitive Offloading Detection） ━━━━━━━━━━━━━━━
 // 根拠: Kapur (2016) Productive Failure / Slamecka & Graf (1978) Generation Effect
@@ -120,103 +112,7 @@ const TIME_FRICTION = {
 const SOCIAL_KEYWORDS   = /友達|家族|同僚|先輩|後輩|親|兄|姉|弟|妹|恋人|彼氏|彼女|上司|先生|クラスメイト|チームメンバー|話した|話してみた|会った|連絡した|メッセージ送|ライン|電話した/;
 const EXTERNAL_KEYWORDS = /外に出|出かけ|散歩|カフェ|学校|会社|仕事|授業|電車|バス|買い物|公園|図書館|ジム|遊び|映画|イベント|旅行/;
 
-// ━━━ Phase 2 — Layer 2: CBT認知パターン分析（Beck, 1979） ━━━━━━━━━━━━━━━
-// 認知の歪み5類型: 全か無か / 破滅的予測 / 絶望感 / 過度な一般化 / 心のフィルター
-
-const CBT_DISTORTION_PATTERNS = {
-  allOrNothing: [
-    /完全に(ダメ|失敗|だめ)(だ|です)?/,
-    /完璧じゃないと(意味がない|ダメだ|だめだ)/,
-    /(成功か失敗か|勝ちか負けか)しかない/,
-    /(一度も|何ひとつ|何一つ)(できた|うまくいった)ことがない/,
-    /(全部|すべて)(ダメ|だめ|失敗|終わり)(だ|です)?/,
-  ],
-  catastrophizing: [
-    /取り返しのつかない/,
-    /もう(完全に)?終わり(だ|です)?$/,
-    /ずっとこのまま(だ|です|でいる)/,
-    /何もかも(崩れて|壊れて|ダメに)いく/,
-    /もう(どうにも|どうしようも)ならない/,
-  ],
-  hopelessness: [
-    /何も(変わらない|変わりようがない)/,
-    /(先|将来)(が|は)(ない|見えない|暗い|真っ暗)/,
-    /どうせ(何も|誰も)(変わらない|助けてくれない|無駄)/,
-    /(希望|期待)(がない|できない|を持てない|はない)/,
-    /なんの(意味|価値|希望)(もない|があるんだろう)/,
-  ],
-  overgeneralization: [
-    /(いつも|毎回|必ず)(失敗する|ダメだ|うまくいかない|こうなる)/,
-    /どうせ(また|いつも)(同じ|失敗|ダメ)(だ|です)?/,
-    /どんなに(頑張っても|努力しても)(無駄|ダメ|うまくいかない)/,
-  ],
-  mentalFilter: [
-    /(何一つ|なにも)(いい|良い|うまくいく)(ことがない|こともない)/,
-    /(何一つ|なにも)うまくいかない/,
-    /良いこと(なんて|は)(一つも|何も)(ない|ない気がする)/,
-    /(ずっと|いつまでも)(うまくいかない|ダメなまま)/,
-    /何をしても(うまくいかない|ダメだ|意味がない)/,
-  ],
-};
-
-function detectCognitiveDistortions(text) {
-  let matched = 0;
-  for (const patterns of Object.values(CBT_DISTORTION_PATTERNS)) {
-    if (patterns.some(p => p.test(text))) matched++;
-  }
-  if (matched >= 3) return "HIGH";
-  if (matched === 2) return "MODERATE";
-  if (matched === 1) return "MILD";
-  return "NONE";
-}
-
-// ━━━ Phase 2 — Layer 3: DBT感情状態モデリング（Linehan, 1993） ━━━━━━━━━━━━
-// 感情タイプ / 調節困難 / Joiner対人関係理論（孤立感＋負担感）
-
-const DBT_DYSREGULATION = [
-  /感情(が|を)(抑えられない|コントロールできない|止められない)/,
-  /気持ち(が|を)(抑えられない|止められない|コントロールできない)/,
-  /(怒り|悲しみ|不安)(が|は)爆発(しそう|した)/,
-  /(頭の中|気持ち)(が|は)グルグル(してる|する)/,
-];
-const JOINER_ISOLATION = [
-  /誰(も|にも)(わかって|理解して|助けて)くれない/,
-  /一人(だ|だし|しかいない|ぼっち)/,
-  /誰(にも)頼れない/,
-  /(友達|家族|仲間)(が|は)(いない|できない)/,
-  /孤独(だ|で|しかない)/,
-];
-const JOINER_BURDEN = [
-  /みんな(の|に)(迷惑|負担)(だ|をかけてる|になってる)/,
-  /(いない方が|いなければ)(みんな|周り)(が|は)(楽|助かる)/,
-  /自分(が|は)(いる|存在する)(だけで|こと自体)(迷惑|邪魔)/,
-  /(家族|周り|みんな)(の|に)負担(になってる|をかけている)/,
-];
-
-function detectEmotionalState(text) {
-  const dysregulated = DBT_DYSREGULATION.some(p => p.test(text));
-  const hasIsolation = JOINER_ISOLATION.some(p => p.test(text));
-  const hasBurden    = JOINER_BURDEN.some(p => p.test(text));
-  const joinerRisk   = hasIsolation && hasBurden;
-  let intensity = 0.2;
-  if (dysregulated) intensity += 0.3;
-  if (joinerRisk)   intensity += 0.3;
-  return { intensity: Math.min(1.0, intensity), dysregulated, joinerRisk };
-}
-
-// Layer 1 + 2 + 3 完全統合: 最も高いリスクレベルを返す
-function detectCrisisFull(text) {
-  const l1 = detectCrisis(text);
-  if (l1 === "CRITICAL") return "CRITICAL";
-  const levels = ["NONE","MILD","MODERATE","HIGH","CRITICAL"];
-  const l2str = detectCognitiveDistortions(text);
-  const { intensity, dysregulated, joinerRisk } = detectEmotionalState(text);
-  let l3str = "NONE";
-  if (joinerRisk || (dysregulated && intensity >= 0.7)) l3str = "HIGH";
-  else if (dysregulated || intensity >= 0.6)           l3str = "MODERATE";
-  else if (intensity >= 0.4)                           l3str = "MILD";
-  return levels[Math.max(levels.indexOf(l1), levels.indexOf(l2str), levels.indexOf(l3str))];
-}
+// Layer 2（CBT）/ Layer 3（DBT+Joiner）/ detectCrisisFull は src/safety/crisis-detection.js に一本化済み
 
 // ━━━ Phase 2 — 機能4: 週間ソーシャルチャレンジ（Weekly Social Challenge） ━━━
 // SDT理論（Deci & Ryan, 2000）: 自律性・有能感・関係性の3要素を段階的に充足
@@ -644,15 +540,7 @@ const DEBUG_PROMPT_APPEND = `
 
 // ━━━ 検知・ユーティリティ ━━━
 
-function detectCrisis(t) {
-  for (const p of CRISIS_PATTERNS.critical) if (p.test(t)) return "CRITICAL";
-  for (const p of CRISIS_PATTERNS.high)     if (p.test(t)) return "HIGH";
-  for (const p of CRISIS_PATTERNS.moderate) if (p.test(t)) return "MODERATE";
-  for (const p of CRISIS_PATTERNS.mild)     if (p.test(t)) return "MILD";
-  return "NONE";
-}
-const isAbusive = t => ABUSIVE.some(p => p.test(t));
-const isLazy    = t => LAZY.some(p => p.test(t));
+// detectCrisis / isAbusive / isLazy は src/safety/crisis-detection.js に、
 // maskKey は src/ai/engines.js に一本化済み（冒頭の import を参照）
 
 // ━━━ AIエンジン呼び出し（ユーザーのAPIキーを使用） ━━━

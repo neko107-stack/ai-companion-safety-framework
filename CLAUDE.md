@@ -120,7 +120,7 @@ C-SSRS準拠の4層アーキテクチャ。`detectCrisisFull()` が L1+L2+L3 の
 `recordLog()` の `context` オブジェクトに会話テキスト・APIキー・ユーザー名・個人情報を**絶対に含めない**。`engines.js` の実装パターンを踏襲すること。
 
 ### テスト
-`src/safety/crisis-detection.test.js` と `crisis-detection.test.js`（ルート）が存在する。`src/` 以下のモジュールを参照する方が正規。危機検知ロジックを変更したら対応テストも必ず更新する。
+危機検知のテストは `src/safety/crisis-detection.test.js` に一本化されている（実モジュールを import して検証。旧ルートのインライン再定義版は削除済み）。危機検知ロジックを変更したら対応テストも必ず更新する。「一本化時の検知強化の固定」describe は検知レベルを**下げない**ことを保証するガードなので削除しない。
 
 ## トークン節約のための規約
 
@@ -128,4 +128,4 @@ C-SSRS準拠の4層アーキテクチャ。`detectCrisisFull()` が L1+L2+L3 の
 - ファイル全体が不要なら `offset`/`limit` を使って必要な行だけ読む
 - 定数の確認は `src/constants/index.js` 1ファイルで完結する
 - API呼び出しの実装を確認するなら `src/ai/engines.js` のみ読めば足りる（`api/chat.js` はサーバー側プロキシで別物）
-- 危機検知の実装は `src/safety/crisis-detection.js`、テストは同ディレクトリの `crisis-detection.test.js`（ルートの同名ファイルは旧版）
+- 危機検知の実装は `src/safety/crisis-detection.js`、テストは同ディレクトリの `crisis-detection.test.js`
