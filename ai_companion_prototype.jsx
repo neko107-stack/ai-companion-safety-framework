@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback, createElemen
 import { discoverModels, mergeModels } from "./src/ai/model-discovery.js";
 import { encryptData, decryptData, exportCompanionData, importCompanionData } from "./src/safety/encryption.js";
 import { APP_VERSION, ERR, classifyApiError, recordLog, getLogs, exportLogs, clearLogs } from "./src/utils/logger.js";
-import { INTERESTS, VOICES, THEMES, ACCENTS, AI_ENGINES } from "./src/constants/index.js";
+import { INTERESTS, VOICES, THEMES, ACCENTS, AI_ENGINES, DEFAULT_API_MODELS } from "./src/constants/index.js";
+import { HOSTED_TIER_MODELS } from "./src/constants/hosted-tiers.js";
 import { getLongTermMemory, calcCertainty, certaintyLabel, detectPinRequest, generateLTMSummary } from "./src/ai/memory.js";
 import { callAI as callAIBase, maskKey } from "./src/ai/engines.js";
 import { detectCrisisFull, isAbusive, isLazy, isDependencyRisk, detectLongitudinalChange, HOTLINE_CONTACTS } from "./src/safety/crisis-detection.js";
@@ -214,10 +215,11 @@ function clearKeyVault() {
   localStorage.removeItem(API_KEY_VAULT_KEY);
 }
 
-const HOST_FREE_ENGINE = "gemini";
-const HOST_FREE_MODEL  = "gemini-2.0-flash";
-const SUPPORTER_ENGINE = "claude";
-const SUPPORTER_MODEL  = "claude-haiku-4-5-20251001";
+// ティア別モデルは src/constants/hosted-tiers.js に一元化（api/chat.js と共有）
+const HOST_FREE_ENGINE = HOSTED_TIER_MODELS.HOST_FREE.engine;
+const HOST_FREE_MODEL  = HOSTED_TIER_MODELS.HOST_FREE.model;
+const SUPPORTER_ENGINE = HOSTED_TIER_MODELS.SUPPORTER.engine;
+const SUPPORTER_MODEL  = HOSTED_TIER_MODELS.SUPPORTER.model;
 const MAX_HOST_FREE_SESSIONS = 10;
 const MONTHLY_USAGE_KEY   = "aico_hostFreeUsage";
 const SUPPORTER_TOKEN_KEY = "aico_supporterToken";
@@ -1304,9 +1306,7 @@ function PlanSelectionScreen({ onSelectBYOK, onSelectHostFree, onSelectSupporter
 function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
   const [selectedEngine, setSelectedEngine] = useState(apiConfig.mainEngine || "claude");
   const [keys,    setKeys]    = useState(apiConfig.keys  || {});
-  const [models,  setModels]  = useState(apiConfig.models || {
-    claude:"claude-sonnet-4-20250514", openai:"gpt-4o", gemini:"gemini-1.5-pro", llama:"gemma3:12b",
-  });
+  const [models,  setModels]  = useState(apiConfig.models || { ...DEFAULT_API_MODELS });
   const [mainEngine, setMainEngine] = useState(apiConfig.mainEngine || "claude");
   const [showKey,    setShowKey]    = useState({});
   const [testing,          setTesting]          = useState({});
@@ -2404,7 +2404,7 @@ export default function AICompanionApp() {
   const [apiConfig, setApiConfig] = useState(() => ({
     mainEngine:       lsGet("apiMainEngine", "claude"),
     keys:             ssGet("apiKeys", {}),   // ← sessionStorage（タブを閉じると消える）
-    models:           lsGet("apiModels", { claude:"claude-sonnet-4-20250514", openai:"gpt-4o", gemini:"gemini-1.5-pro", llama:"qwen2.5:7b" }),
+    models:           lsGet("apiModels", { ...DEFAULT_API_MODELS }),
     llamaEndpoint:    lsGet("apiLlamaEndpoint",    "http://localhost:11434"),
     llamaCustomModel: lsGet("apiLlamaCustomModel", ""),
     configured:       lsGet("apiConfigured", false),
