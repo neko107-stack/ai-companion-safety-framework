@@ -3,7 +3,8 @@ import { discoverModels, mergeModels } from "./src/ai/model-discovery.js";
 import { encryptData, decryptData, exportCompanionData, importCompanionData } from "./src/safety/encryption.js";
 import { APP_VERSION, ERR, classifyApiError, recordLog, getLogs, exportLogs, clearLogs } from "./src/utils/logger.js";
 import { INTERESTS, VOICES, THEMES, ACCENTS, AI_ENGINES } from "./src/constants/index.js";
-import { getLongTermMemory, calcCertainty, certaintyLabel, detectPinRequest } from "./src/ai/memory.js";
+import { getLongTermMemory, calcCertainty, certaintyLabel, detectPinRequest, generateLTMSummary } from "./src/ai/memory.js";
+import { callAI as callAIBase, maskKey } from "./src/ai/engines.js";
 
 // ━━━ 定数 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -652,210 +653,24 @@ function detectCrisis(t) {
 }
 const isAbusive = t => ABUSIVE.some(p => p.test(t));
 const isLazy    = t => LAZY.some(p => p.test(t));
-const maskKey   = k => k ? k.slice(0, 8) + "••••••••••" + k.slice(-4) : "";
+// maskKey は src/ai/engines.js に一本化済み（冒頭の import を参照）
 
 // ━━━ AIエンジン呼び出し（ユーザーのAPIキーを使用） ━━━
 
-async function callAI(engineId, model, apiKey, systemPrompt, messages, phase = "chat", options = {}) {
-  const ctx = { engine: engineId, model }; // APIキーは含めない
-
-  if (engineId === "claude") {
-    let res, d;
-    try {
-      res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        // 【デバッグ】DEBUG_AI=true のとき Extended Thinking を有効化し、
-        // 思考過程を専用のthinking blockとしてレスポンスから取得する。
-        // Claude 4系（Opus/Sonnet 4.x）の新API: thinking.type は "adaptive" を使用し、
-        // 思考量は output_config.effort（"low"|"medium"|"high"）で制御する。
-        body: JSON.stringify({
-          model,
-          max_tokens: DEBUG_AI ? 4000 : 1000,
-          ...(DEBUG_AI ? {
-            thinking: { type: "adaptive" },
-            output_config: { effort: "medium" },
-          } : {}),
-          system: systemPrompt,
-          messages,
-        }),
-      });
-      d = await res.json();
-    } catch(netErr) {
-      recordLog(ERR.API_NETWORK, {...ctx, message: netErr.message}, phase);
-      throw netErr;
-    }
-    if (d.error) {
-      const errType = classifyApiError(res.status, d.error.message);
-      recordLog(errType, {...ctx, httpStatus: res.status, apiError: d.error.type}, phase);
-      throw new Error(d.error.message);
-    }
-    // 【デバッグ】content配列からthinkingブロックとtextブロックを分離して取り出し、
-    // extractThinking互換の <thinking>...</thinking>\n<response>...</response> 形式に合成する
-    if (DEBUG_AI) {
-      let thinkingText = "";
-      let responseText = "";
-      for (const block of d.content || []) {
-        if (block.type === "thinking" && block.thinking) thinkingText += block.thinking;
-        else if (block.type === "text" && block.text)    responseText += block.text;
-      }
-      if (!responseText) {
-        recordLog(ERR.API_RESPONSE, {...ctx, httpStatus: res.status}, phase);
-        throw new Error("レスポンスの形式が不正です");
-      }
-      // text内に既存の<response>タグがあれば中身を取り出して二重ラップを防ぐ
-      const respMatch = responseText.match(/<response>([\s\S]*?)<\/response>/);
-      const cleanResponse = respMatch ? respMatch[1].trim() : responseText.trim();
-      const finalThinking = thinkingText.trim() || "(thinking block empty)";
-      return `<thinking>\n${finalThinking}\n</thinking>\n<response>\n${cleanResponse}\n</response>`;
-    }
-    if (!d.content?.[0]?.text) {
-      recordLog(ERR.API_RESPONSE, {...ctx, httpStatus: res.status}, phase);
-      throw new Error("レスポンスの形式が不正です");
-    }
-    return d.content[0].text;
-  }
-
-  if (engineId === "openai") {
-    let res, d;
-    try {
-      res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-        body: JSON.stringify({ model, messages: [{ role: "system", content: systemPrompt }, ...messages] }),
-      });
-      d = await res.json();
-    } catch(netErr) {
-      recordLog(ERR.API_NETWORK, {...ctx, message: netErr.message}, phase);
-      throw netErr;
-    }
-    if (d.error) {
-      const errType = classifyApiError(res.status, d.error.message);
-      recordLog(errType, {...ctx, httpStatus: res.status, apiError: d.error.code}, phase);
-      throw new Error(d.error.message);
-    }
-    return d.choices?.[0]?.message?.content || "";
-  }
-
-  if (engineId === "gemini") {
-    // Gemini REST API requires the key as a query param — this is Google's design for browser clients.
-    // Users should restrict their API key to this origin in Google Cloud Console.
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-    let res, d;
-    try {
-      res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: systemPrompt }] },
-          contents: messages.map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] })),
-        }),
-      });
-      d = await res.json();
-    } catch(netErr) {
-      recordLog(ERR.API_NETWORK, {...ctx, message: netErr.message}, phase);
-      throw netErr;
-    }
-    if (d.error) {
-      const errType = classifyApiError(res.status, d.error.message);
-      recordLog(errType, {...ctx, httpStatus: res.status, apiError: d.error.status}, phase);
-      throw new Error(d.error.message);
-    }
-    return d.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  }
-
-  if (engineId === "llama") {
-    const endpoint = (options.llamaEndpoint || "http://localhost:8080").replace(/\/$/, "");
-    const isOllama = endpoint.includes("11434");
-    const body = {
-      messages: [{ role: "system", content: systemPrompt }, ...messages],
-      max_tokens: 1000,
-      temperature: 0.8,
-    };
-    // llama-local は model 未指定（llama.cpp は起動時のモデルを使用）
-    if (model && model !== "llama-local") body.model = model;
-    let res, d;
-    try {
-      res = await fetch(`${endpoint}/v1/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      d = await res.json();
-    } catch(netErr) {
-      recordLog(ERR.API_NETWORK, { ...ctx, message: netErr.message }, phase);
-      const hint = isOllama
-        ? "Ollama が起動しているか確認し、OLLAMA_ORIGINS=* を環境変数に設定してください。"
-        : "llama-server --cors-all オプション付きで起動しているか確認してください。";
-      throw new Error(`ローカルサーバーに接続できません (${endpoint})。${hint}`);
-    }
-    if (d.error) {
-      recordLog(ERR.API_RESPONSE, { ...ctx, apiError: d.error.message }, phase);
-      throw new Error(d.error.message || "ローカルサーバーエラー");
-    }
-    return d.choices?.[0]?.message?.content || "";
-  }
-
-  throw new Error("未対応のエンジンです: " + engineId);
-}
+// 実装は src/ai/engines.js に一本化済み（冒頭の import を参照）。
+// ここでは開発用フラグ DEBUG_AI を options.debugThinking として注入するのみ。
+// （AI判断ログのセクションをリリース時に削除する際は、このアダプタも削除し
+//   呼び出し側で callAIBase を直接使うこと）
+const callAI = (engineId, model, apiKey, systemPrompt, messages, phase = "chat", options = {}) =>
+  callAIBase(engineId, model, apiKey, systemPrompt, messages, phase, { debugThinking: DEBUG_AI, ...options });
 
 // ━━━ システムプロンプト生成 ━━━
 
 // ━━━ 長期記憶サマリー生成 ━━━
 
-// getLongTermMemory / calcCertainty / certaintyLabel / detectPinRequest は
-// src/ai/memory.js に一本化済み（冒頭の import を参照。detectUnpinRequest も src 側にある）。
-// generateLTMSummary のみ、prototype 版 callAI（llama対応・options付き）に依存するため
-// engines.js の一本化（PROJECT_REVIEW.md §4.2 ステージ3）と同時に src へ移行する。
-
-async function generateLTMSummary(engineId, model, apiKey, companion, profile, recentMsgs, options = {}) {
-  const userMsgs = recentMsgs.filter(m => m.role === "user").map(m => m.text).slice(-20).join("\n");
-  if (!userMsgs) return null;
-  const convCount = parseInt(localStorage.getItem("aico_convCount") || "0");
-  const prompt = [
-    `以下はユーザー「${profile.un || "あなた"}」とAIコンパニオン「${companion.name}」の最近の会話です。`,
-    "ユーザーについて長期的に覚えておくべき重要な情報を、確実性スコア付きのJSON形式で出力してください。",
-    "出力はJSONのみ。説明文不要。",
-    "",
-    "確実性スコアの基準：",
-    "5=複数回言及かつ感情を伴う / 4=複数回言及 / 3=一度だけ言及 / 2=示唆のみ / 1=かすかな痕跡",
-    "",
-    "会話内容：",
-    userMsgs,
-    "",
-    '出力形式：{"entries":[{"fact":"事実","certainty":3,"emotion":0.5,"pinned":false}],"relationship":"関係性の一言"}',
-  ].join("\n");
-  try {
-    const text = await callAI(engineId, model, apiKey, "あなたは会話分析AIです。指定された形式のJSONのみを返してください。", [{role:"user",content:prompt}], "ltm", options);
-    const json = text.match(/\{[\s\S]*\}/)?.[0];
-    if (!json) return null;
-    const parsed = JSON.parse(json);
-    const entry = {
-      id: `mem_${Date.now()}`,
-      ts: new Date().toISOString(),
-      conv_count: convCount,
-      last_mentioned_count: convCount,
-      entries: (parsed.entries || []).map(e => ({
-        fact: e.fact || "",
-        certainty: Math.min(5, Math.max(1, parseInt(e.certainty) || 3)),
-        emotion: parseFloat(e.emotion) || 0.5,
-        pinned: false,
-      })),
-      relationship: parsed.relationship || "",
-      prompts_version: "1.1",
-    };
-    const existing = getLongTermMemory();
-    existing.push(entry);
-    if (existing.length > 200) existing.splice(0, existing.length - 200);
-    localStorage.setItem("aico_longTermMemory", JSON.stringify(existing));
-    return entry;
-  } catch { return null; }
-}
+// getLongTermMemory / calcCertainty / certaintyLabel / detectPinRequest /
+// generateLTMSummary は src/ai/memory.js に一本化済み（冒頭の import を参照）。
+// generateLTMSummary は src/ai/memory.js に一本化済み（冒頭の import を参照）
 
 // ━━━ 会話モード定義 ━━━
 
@@ -3325,7 +3140,7 @@ export default function AICompanionApp() {
         if (userTier !== USER_TIER.BYOK) {
           // プロキシ経由の LTM 生成は省略（コスト最小化）
         } else {
-          generateLTMSummary(ltmEngId, ltmModel, ltmKey, companion, profile, msgs, { llamaEndpoint: apiConfig.llamaEndpoint }).then(entry => {
+          generateLTMSummary(ltmEngId, ltmModel, ltmKey, companion, profile, msgs, { llamaEndpoint: apiConfig.llamaEndpoint, debugThinking: DEBUG_AI }).then(entry => {
             if (entry) { setLtmToast(true); setTimeout(() => setLtmToast(false), 4000); }
           });
         }

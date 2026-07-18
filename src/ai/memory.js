@@ -31,7 +31,8 @@ export function certaintyLabel(score) {
 export const detectPinRequest   = text => /覚えておいて|絶対忘れないで|ピン留め|必ず覚えて/.test(text);
 export const detectUnpinRequest = text => /忘れていい|覚えなくていい|それはいい/.test(text);
 
-export async function generateLTMSummary(engineId, model, apiKey, companion, profile, recentMsgs) {
+// options は callAI にそのまま透過する（llamaEndpoint / debugThinking 等）
+export async function generateLTMSummary(engineId, model, apiKey, companion, profile, recentMsgs, options = {}) {
   const userMsgs = recentMsgs.filter(m => m.role === "user").map(m => m.text).slice(-20).join("\n");
   if (!userMsgs) return null;
   const convCount = parseInt(localStorage.getItem("aico_convCount") || "0");
@@ -49,7 +50,7 @@ export async function generateLTMSummary(engineId, model, apiKey, companion, pro
     '出力形式：{"entries":[{"fact":"事実","certainty":3,"emotion":0.5,"pinned":false}],"relationship":"関係性の一言"}',
   ].join("\n");
   try {
-    const text = await callAI(engineId, model, apiKey, "あなたは会話分析AIです。指定された形式のJSONのみを返してください。", [{role:"user",content:prompt}]);
+    const text = await callAI(engineId, model, apiKey, "あなたは会話分析AIです。指定された形式のJSONのみを返してください。", [{role:"user",content:prompt}], "ltm", options);
     const json = text.match(/\{[\s\S]*\}/)?.[0];
     if (!json) return null;
     const parsed = JSON.parse(json);
