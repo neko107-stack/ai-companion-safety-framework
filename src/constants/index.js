@@ -63,8 +63,9 @@ export const AI_ENGINES = [
     id: "gemini", name: "Gemini", maker: "Google",
     desc: "Google連携・マルチモーダル", color: "#4285F4",
     models: [
-      {id:"gemini-1.5-pro",  label:"Gemini 1.5 Pro（推奨）"},
-      {id:"gemini-1.5-flash",label:"Gemini 1.5 Flash（軽量）"},
+      {id:"gemini-2.5-flash", label:"Gemini 2.5 Flash（推奨・高速）"},
+      {id:"gemini-2.5-pro",   label:"Gemini 2.5 Pro（高品質）"},
+      {id:"gemini-2.0-flash", label:"Gemini 2.0 Flash（軽量）"},
     ],
     keyPrefix: "AIza",
     keyLink: "https://aistudio.google.com/app/apikey",
@@ -97,6 +98,6 @@ export const DEFAULT_SETTINGS = {
 export const DEFAULT_API_MODELS = {
   claude: "claude-sonnet-4-6",
   openai: "gpt-4o",
-  gemini: "gemini-1.5-pro",
+  gemini: "gemini-2.5-flash",
   llama:  "gemma3:12b",
 };

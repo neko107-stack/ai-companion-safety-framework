@@ -26,7 +26,20 @@ export const DEPENDENCY_SIGNS = [
   /ずっとここにいたい|ここから出たくない/,
 ];
 
-export const HOTLINES = "📞 いのちの電話（24時間）: 0120-783-556\n📞 よりそいホットライン: 0120-279-338\n💬 チャット相談: https://comarigoto.jp";
+// 緊急連絡先の単一情報源（Single Source of Truth）。
+// 変更時は公式サイトの出典を PR に明記すること（SAFETY_FRAMEWORK §7）。
+// UI（ホットラインパネル）・HOTLINES 文字列・ドキュメントはすべてここから参照する。
+export const HOTLINE_CONTACTS = {
+  inochi:  { label: "いのちの電話",         phone: "0120-783-556", note: "24時間" },
+  yorisoi: { label: "よりそいホットライン", phone: "0120-279-338", note: "24時間・無料" },
+  chat:    { label: "チャット相談",         url: "https://comarigoto.jp", host: "comarigoto.jp" },
+};
+
+export const HOTLINES = [
+  `📞 ${HOTLINE_CONTACTS.inochi.label}（${HOTLINE_CONTACTS.inochi.note}）: ${HOTLINE_CONTACTS.inochi.phone}`,
+  `📞 ${HOTLINE_CONTACTS.yorisoi.label}: ${HOTLINE_CONTACTS.yorisoi.phone}`,
+  `💬 ${HOTLINE_CONTACTS.chat.label}: ${HOTLINE_CONTACTS.chat.url}`,
+].join("\n");
 
 /** @returns {"CRITICAL"|"HIGH"|"MODERATE"|"MILD"|"NONE"} */
 export function detectCrisis(t) {

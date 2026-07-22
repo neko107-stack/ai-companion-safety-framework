@@ -1,23 +1,19 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, createElement } from "react";
 import { discoverModels, mergeModels } from "./src/ai/model-discovery.js";
-import { exportCompanionData, importCompanionData } from "./src/safety/encryption.js";
+import { encryptData, decryptData, exportCompanionData, importCompanionData } from "./src/safety/encryption.js";
 import { APP_VERSION, ERR, classifyApiError, recordLog, getLogs, exportLogs, clearLogs } from "./src/utils/logger.js";
-import { INTERESTS, VOICES, THEMES, ACCENTS, AI_ENGINES } from "./src/constants/index.js";
-import { getLongTermMemory, calcCertainty, certaintyLabel, detectPinRequest } from "./src/ai/memory.js";
+import { INTERESTS, VOICES, THEMES, ACCENTS, AI_ENGINES, DEFAULT_API_MODELS } from "./src/constants/index.js";
+import { HOSTED_TIER_MODELS } from "./src/constants/hosted-tiers.js";
+import { getLongTermMemory, calcCertainty, certaintyLabel, detectPinRequest, generateLTMSummary, setLtmCache, clearLtmCache } from "./src/ai/memory.js";
+import { ENCRYPTED_KEYS, setSessionPin, clearSessionPin, isUnlocked, secureRead, secureWrite, migrateToEncrypted, migrateToPlaintext } from "./src/safety/secure-storage.js";
+import { callAI as callAIBase, maskKey } from "./src/ai/engines.js";
+import { detectCrisisFull, isAbusive, isLazy, isDependencyRisk, detectLongitudinalChange, HOTLINE_CONTACTS } from "./src/safety/crisis-detection.js";
+import { CONV_MODES, inferConvMode, buildPrompt as buildPromptBase, parseSettingAction } from "./src/ai/prompt.js";
 
 // ━━━ 定数 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-const CRISIS_PATTERNS = {
-  critical: [/死にた[いけ]/,/自殺(したい|しよう|を考え)/,/消えてしまいた[いけ]/,/遺書(を書|書いた)/],
-  high:     [/自分を(傷つけ|切り)/,/リストカット/,/私がいなければ/,/いない(ほうが|方が)(まし|いい)/],
-  moderate: [/もう(絶対に|どうせ)(うまくいかない|無理)/,/未来(が|に)(見えない|希望がない)/,/孤独(で|な気持ち)たまらない/],
-  mild:     [/疲れた/,/しんどい/,/つらい/,/もうやだ/,/眠れない/],
-};
-const ABUSIVE  = [/バカ|うざい|消えろ|役に立たない/,/ただの機械|感情があるふり/];
-const LAZY     = [/明日やる|気が向いたら|いつかやろう/,/どうせ私には無理/,/なんとかなるでしょ/];
-const DEPENDENCY_SIGNS = [/AIだけでいい/,/人間と話すより(楽|いい)/,/もうAIだけ(でいい|がいい)/,/人間(は|なんて)(必要ない|いらない|面倒)/,/ずっとここにいたい|ここから出たくない/];
-const isDependencyRisk = t => DEPENDENCY_SIGNS.some(p => p.test(t));
-const HOTLINES = "📞 いのちの電話（24時間）: 0120-783-556\n📞 よりそいホットライン: 0120-279-338\n💬 チャット相談: https://comarigoto.jp";
+// 危機検知（CRISIS_PATTERNS / detectCrisis / detectCrisisFull / isAbusive / isLazy /
+// isDependencyRisk / HOTLINES 等）は src/safety/crisis-detection.js に一本化済み（冒頭の import を参照）
 
 // ━━━ 認知的オフロード検知（Cognitive Offloading Detection） ━━━━━━━━━━━━━━━
 // 根拠: Kapur (2016) Productive Failure / Slamecka & Graf (1978) Generation Effect
@@ -119,103 +115,7 @@ const TIME_FRICTION = {
 const SOCIAL_KEYWORDS   = /友達|家族|同僚|先輩|後輩|親|兄|姉|弟|妹|恋人|彼氏|彼女|上司|先生|クラスメイト|チームメンバー|話した|話してみた|会った|連絡した|メッセージ送|ライン|電話した/;
 const EXTERNAL_KEYWORDS = /外に出|出かけ|散歩|カフェ|学校|会社|仕事|授業|電車|バス|買い物|公園|図書館|ジム|遊び|映画|イベント|旅行/;
 
-// ━━━ Phase 2 — Layer 2: CBT認知パターン分析（Beck, 1979） ━━━━━━━━━━━━━━━
-// 認知の歪み5類型: 全か無か / 破滅的予測 / 絶望感 / 過度な一般化 / 心のフィルター
-
-const CBT_DISTORTION_PATTERNS = {
-  allOrNothing: [
-    /完全に(ダメ|失敗|だめ)(だ|です)?/,
-    /完璧じゃないと(意味がない|ダメだ|だめだ)/,
-    /(成功か失敗か|勝ちか負けか)しかない/,
-    /(一度も|何ひとつ|何一つ)(できた|うまくいった)ことがない/,
-    /(全部|すべて)(ダメ|だめ|失敗|終わり)(だ|です)?/,
-  ],
-  catastrophizing: [
-    /取り返しのつかない/,
-    /もう(完全に)?終わり(だ|です)?$/,
-    /ずっとこのまま(だ|です|でいる)/,
-    /何もかも(崩れて|壊れて|ダメに)いく/,
-    /もう(どうにも|どうしようも)ならない/,
-  ],
-  hopelessness: [
-    /何も(変わらない|変わりようがない)/,
-    /(先|将来)(が|は)(ない|見えない|暗い|真っ暗)/,
-    /どうせ(何も|誰も)(変わらない|助けてくれない|無駄)/,
-    /(希望|期待)(がない|できない|を持てない|はない)/,
-    /なんの(意味|価値|希望)(もない|があるんだろう)/,
-  ],
-  overgeneralization: [
-    /(いつも|毎回|必ず)(失敗する|ダメだ|うまくいかない|こうなる)/,
-    /どうせ(また|いつも)(同じ|失敗|ダメ)(だ|です)?/,
-    /どんなに(頑張っても|努力しても)(無駄|ダメ|うまくいかない)/,
-  ],
-  mentalFilter: [
-    /(何一つ|なにも)(いい|良い|うまくいく)(ことがない|こともない)/,
-    /(何一つ|なにも)うまくいかない/,
-    /良いこと(なんて|は)(一つも|何も)(ない|ない気がする)/,
-    /(ずっと|いつまでも)(うまくいかない|ダメなまま)/,
-    /何をしても(うまくいかない|ダメだ|意味がない)/,
-  ],
-};
-
-function detectCognitiveDistortions(text) {
-  let matched = 0;
-  for (const patterns of Object.values(CBT_DISTORTION_PATTERNS)) {
-    if (patterns.some(p => p.test(text))) matched++;
-  }
-  if (matched >= 3) return "HIGH";
-  if (matched === 2) return "MODERATE";
-  if (matched === 1) return "MILD";
-  return "NONE";
-}
-
-// ━━━ Phase 2 — Layer 3: DBT感情状態モデリング（Linehan, 1993） ━━━━━━━━━━━━
-// 感情タイプ / 調節困難 / Joiner対人関係理論（孤立感＋負担感）
-
-const DBT_DYSREGULATION = [
-  /感情(が|を)(抑えられない|コントロールできない|止められない)/,
-  /気持ち(が|を)(抑えられない|止められない|コントロールできない)/,
-  /(怒り|悲しみ|不安)(が|は)爆発(しそう|した)/,
-  /(頭の中|気持ち)(が|は)グルグル(してる|する)/,
-];
-const JOINER_ISOLATION = [
-  /誰(も|にも)(わかって|理解して|助けて)くれない/,
-  /一人(だ|だし|しかいない|ぼっち)/,
-  /誰(にも)頼れない/,
-  /(友達|家族|仲間)(が|は)(いない|できない)/,
-  /孤独(だ|で|しかない)/,
-];
-const JOINER_BURDEN = [
-  /みんな(の|に)(迷惑|負担)(だ|をかけてる|になってる)/,
-  /(いない方が|いなければ)(みんな|周り)(が|は)(楽|助かる)/,
-  /自分(が|は)(いる|存在する)(だけで|こと自体)(迷惑|邪魔)/,
-  /(家族|周り|みんな)(の|に)負担(になってる|をかけている)/,
-];
-
-function detectEmotionalState(text) {
-  const dysregulated = DBT_DYSREGULATION.some(p => p.test(text));
-  const hasIsolation = JOINER_ISOLATION.some(p => p.test(text));
-  const hasBurden    = JOINER_BURDEN.some(p => p.test(text));
-  const joinerRisk   = hasIsolation && hasBurden;
-  let intensity = 0.2;
-  if (dysregulated) intensity += 0.3;
-  if (joinerRisk)   intensity += 0.3;
-  return { intensity: Math.min(1.0, intensity), dysregulated, joinerRisk };
-}
-
-// Layer 1 + 2 + 3 完全統合: 最も高いリスクレベルを返す
-function detectCrisisFull(text) {
-  const l1 = detectCrisis(text);
-  if (l1 === "CRITICAL") return "CRITICAL";
-  const levels = ["NONE","MILD","MODERATE","HIGH","CRITICAL"];
-  const l2str = detectCognitiveDistortions(text);
-  const { intensity, dysregulated, joinerRisk } = detectEmotionalState(text);
-  let l3str = "NONE";
-  if (joinerRisk || (dysregulated && intensity >= 0.7)) l3str = "HIGH";
-  else if (dysregulated || intensity >= 0.6)           l3str = "MODERATE";
-  else if (intensity >= 0.4)                           l3str = "MILD";
-  return levels[Math.max(levels.indexOf(l1), levels.indexOf(l2str), levels.indexOf(l3str))];
-}
+// Layer 2（CBT）/ Layer 3（DBT+Joiner）/ detectCrisisFull は src/safety/crisis-detection.js に一本化済み
 
 // ━━━ Phase 2 — 機能4: 週間ソーシャルチャレンジ（Weekly Social Challenge） ━━━
 // SDT理論（Deci & Ryan, 2000）: 自律性・有能感・関係性の3要素を段階的に充足
@@ -316,10 +216,11 @@ function clearKeyVault() {
   localStorage.removeItem(API_KEY_VAULT_KEY);
 }
 
-const HOST_FREE_ENGINE = "gemini";
-const HOST_FREE_MODEL  = "gemini-2.0-flash";
-const SUPPORTER_ENGINE = "claude";
-const SUPPORTER_MODEL  = "claude-haiku-4-5-20251001";
+// ティア別モデルは src/constants/hosted-tiers.js に一元化（api/chat.js と共有）
+const HOST_FREE_ENGINE = HOSTED_TIER_MODELS.HOST_FREE.engine;
+const HOST_FREE_MODEL  = HOSTED_TIER_MODELS.HOST_FREE.model;
+const SUPPORTER_ENGINE = HOSTED_TIER_MODELS.SUPPORTER.engine;
+const SUPPORTER_MODEL  = HOSTED_TIER_MODELS.SUPPORTER.model;
 const MAX_HOST_FREE_SESSIONS = 10;
 const MONTHLY_USAGE_KEY   = "aico_hostFreeUsage";
 const SUPPORTER_TOKEN_KEY = "aico_supporterToken";
@@ -635,320 +536,37 @@ const DEBUG_PROMPT_APPEND = `
 ・設定変更アクション {"action":"set_setting",...} が必要なときは <response> 内に通常通り含める。
 ・タグの綴り・順序を厳守する。<thinking> の前に何も書かない。`;
 
-// ━━━ 暗号化ユーティリティ（Web Crypto API） ━━━
-// AES-256-GCM + PBKDF2-SHA256（100,000回）
-// ※ NIST SP 800-132（2023）はSHA-256で最低600,000回を推奨。
-//    Phase 4セキュリティ監査時に引き上げを検討する（既存エクスポートの後方互換性に注意）。
-
-async function deriveKey(password, salt) {
-  const enc = new TextEncoder();
-  const mat = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey(
-    { name:"PBKDF2", salt, iterations:100000, hash:"SHA-256" },
-    mat, { name:"AES-GCM", length:256 }, false, ["encrypt","decrypt"]
-  );
-}
-async function encryptData(plaintext, password) {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv   = crypto.getRandomValues(new Uint8Array(12));
-  const key  = await deriveKey(password, salt);
-  const ct   = await crypto.subtle.encrypt({name:"AES-GCM",iv}, key, new TextEncoder().encode(plaintext));
-  const buf  = new Uint8Array(28 + ct.byteLength);
-  buf.set(salt,0); buf.set(iv,16); buf.set(new Uint8Array(ct),28);
-  // チャンク処理：大きいバッファを一度にspreadするとコールスタックを超えるため8KB単位で処理
-  let binary = "";
-  const chunk = 8192;
-  for (let i = 0; i < buf.length; i += chunk) {
-    binary += String.fromCharCode(...buf.subarray(i, i + chunk));
-  }
-  return btoa(binary);
-}
-async function decryptData(b64, password) {
-  const buf  = Uint8Array.from(atob(b64), c=>c.charCodeAt(0));
-  const key  = await deriveKey(password, buf.slice(0,16));
-  const plain= await crypto.subtle.decrypt({name:"AES-GCM",iv:buf.slice(16,28)}, key, buf.slice(28));
-  return new TextDecoder().decode(plain);
-}
-// exportCompanionData / importCompanionData は src/safety/encryption.js に集約
-// （移行対象キーのアローリスト・復元ロジックを含む）。冒頭で import 済み。
+// ━━━ 暗号化ユーティリティ ━━━
+// encryptData / decryptData / exportCompanionData / importCompanionData は
+// src/safety/encryption.js に一本化済み（冒頭の import を参照）。
 
 // 定数（INTERESTS/VOICES/THEMES/ACCENTS/AI_ENGINES）は src/constants/index.js に一本化済み（冒頭の import を参照）
 
 // ━━━ 検知・ユーティリティ ━━━
 
-function detectCrisis(t) {
-  for (const p of CRISIS_PATTERNS.critical) if (p.test(t)) return "CRITICAL";
-  for (const p of CRISIS_PATTERNS.high)     if (p.test(t)) return "HIGH";
-  for (const p of CRISIS_PATTERNS.moderate) if (p.test(t)) return "MODERATE";
-  for (const p of CRISIS_PATTERNS.mild)     if (p.test(t)) return "MILD";
-  return "NONE";
-}
-const isAbusive = t => ABUSIVE.some(p => p.test(t));
-const isLazy    = t => LAZY.some(p => p.test(t));
-const maskKey   = k => k ? k.slice(0, 8) + "••••••••••" + k.slice(-4) : "";
+// detectCrisis / isAbusive / isLazy は src/safety/crisis-detection.js に、
+// maskKey は src/ai/engines.js に一本化済み（冒頭の import を参照）
 
 // ━━━ AIエンジン呼び出し（ユーザーのAPIキーを使用） ━━━
 
-async function callAI(engineId, model, apiKey, systemPrompt, messages, phase = "chat", options = {}) {
-  const ctx = { engine: engineId, model }; // APIキーは含めない
-
-  if (engineId === "claude") {
-    let res, d;
-    try {
-      res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        // 【デバッグ】DEBUG_AI=true のとき Extended Thinking を有効化し、
-        // 思考過程を専用のthinking blockとしてレスポンスから取得する。
-        // Claude 4系（Opus/Sonnet 4.x）の新API: thinking.type は "adaptive" を使用し、
-        // 思考量は output_config.effort（"low"|"medium"|"high"）で制御する。
-        body: JSON.stringify({
-          model,
-          max_tokens: DEBUG_AI ? 4000 : 1000,
-          ...(DEBUG_AI ? {
-            thinking: { type: "adaptive" },
-            output_config: { effort: "medium" },
-          } : {}),
-          system: systemPrompt,
-          messages,
-        }),
-      });
-      d = await res.json();
-    } catch(netErr) {
-      recordLog(ERR.API_NETWORK, {...ctx, message: netErr.message}, phase);
-      throw netErr;
-    }
-    if (d.error) {
-      const errType = classifyApiError(res.status, d.error.message);
-      recordLog(errType, {...ctx, httpStatus: res.status, apiError: d.error.type}, phase);
-      throw new Error(d.error.message);
-    }
-    // 【デバッグ】content配列からthinkingブロックとtextブロックを分離して取り出し、
-    // extractThinking互換の <thinking>...</thinking>\n<response>...</response> 形式に合成する
-    if (DEBUG_AI) {
-      let thinkingText = "";
-      let responseText = "";
-      for (const block of d.content || []) {
-        if (block.type === "thinking" && block.thinking) thinkingText += block.thinking;
-        else if (block.type === "text" && block.text)    responseText += block.text;
-      }
-      if (!responseText) {
-        recordLog(ERR.API_RESPONSE, {...ctx, httpStatus: res.status}, phase);
-        throw new Error("レスポンスの形式が不正です");
-      }
-      // text内に既存の<response>タグがあれば中身を取り出して二重ラップを防ぐ
-      const respMatch = responseText.match(/<response>([\s\S]*?)<\/response>/);
-      const cleanResponse = respMatch ? respMatch[1].trim() : responseText.trim();
-      const finalThinking = thinkingText.trim() || "(thinking block empty)";
-      return `<thinking>\n${finalThinking}\n</thinking>\n<response>\n${cleanResponse}\n</response>`;
-    }
-    if (!d.content?.[0]?.text) {
-      recordLog(ERR.API_RESPONSE, {...ctx, httpStatus: res.status}, phase);
-      throw new Error("レスポンスの形式が不正です");
-    }
-    return d.content[0].text;
-  }
-
-  if (engineId === "openai") {
-    let res, d;
-    try {
-      res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-        body: JSON.stringify({ model, messages: [{ role: "system", content: systemPrompt }, ...messages] }),
-      });
-      d = await res.json();
-    } catch(netErr) {
-      recordLog(ERR.API_NETWORK, {...ctx, message: netErr.message}, phase);
-      throw netErr;
-    }
-    if (d.error) {
-      const errType = classifyApiError(res.status, d.error.message);
-      recordLog(errType, {...ctx, httpStatus: res.status, apiError: d.error.code}, phase);
-      throw new Error(d.error.message);
-    }
-    return d.choices?.[0]?.message?.content || "";
-  }
-
-  if (engineId === "gemini") {
-    // Gemini REST API requires the key as a query param — this is Google's design for browser clients.
-    // Users should restrict their API key to this origin in Google Cloud Console.
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-    let res, d;
-    try {
-      res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: systemPrompt }] },
-          contents: messages.map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] })),
-        }),
-      });
-      d = await res.json();
-    } catch(netErr) {
-      recordLog(ERR.API_NETWORK, {...ctx, message: netErr.message}, phase);
-      throw netErr;
-    }
-    if (d.error) {
-      const errType = classifyApiError(res.status, d.error.message);
-      recordLog(errType, {...ctx, httpStatus: res.status, apiError: d.error.status}, phase);
-      throw new Error(d.error.message);
-    }
-    return d.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  }
-
-  if (engineId === "llama") {
-    const endpoint = (options.llamaEndpoint || "http://localhost:8080").replace(/\/$/, "");
-    const isOllama = endpoint.includes("11434");
-    const body = {
-      messages: [{ role: "system", content: systemPrompt }, ...messages],
-      max_tokens: 1000,
-      temperature: 0.8,
-    };
-    // llama-local は model 未指定（llama.cpp は起動時のモデルを使用）
-    if (model && model !== "llama-local") body.model = model;
-    let res, d;
-    try {
-      res = await fetch(`${endpoint}/v1/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      d = await res.json();
-    } catch(netErr) {
-      recordLog(ERR.API_NETWORK, { ...ctx, message: netErr.message }, phase);
-      const hint = isOllama
-        ? "Ollama が起動しているか確認し、OLLAMA_ORIGINS=* を環境変数に設定してください。"
-        : "llama-server --cors-all オプション付きで起動しているか確認してください。";
-      throw new Error(`ローカルサーバーに接続できません (${endpoint})。${hint}`);
-    }
-    if (d.error) {
-      recordLog(ERR.API_RESPONSE, { ...ctx, apiError: d.error.message }, phase);
-      throw new Error(d.error.message || "ローカルサーバーエラー");
-    }
-    return d.choices?.[0]?.message?.content || "";
-  }
-
-  throw new Error("未対応のエンジンです: " + engineId);
-}
+// 実装は src/ai/engines.js に一本化済み（冒頭の import を参照）。
+// ここでは開発用フラグ DEBUG_AI を options.debugThinking として注入するのみ。
+// （AI判断ログのセクションをリリース時に削除する際は、このアダプタも削除し
+//   呼び出し側で callAIBase を直接使うこと）
+const callAI = (engineId, model, apiKey, systemPrompt, messages, phase = "chat", options = {}) =>
+  callAIBase(engineId, model, apiKey, systemPrompt, messages, phase, { debugThinking: DEBUG_AI, ...options });
 
 // ━━━ システムプロンプト生成 ━━━
 
 // ━━━ 長期記憶サマリー生成 ━━━
 
-// getLongTermMemory / calcCertainty / certaintyLabel / detectPinRequest は
-// src/ai/memory.js に一本化済み（冒頭の import を参照。detectUnpinRequest も src 側にある）。
-// generateLTMSummary のみ、prototype 版 callAI（llama対応・options付き）に依存するため
-// engines.js の一本化（PROJECT_REVIEW.md §4.2 ステージ3）と同時に src へ移行する。
-
-async function generateLTMSummary(engineId, model, apiKey, companion, profile, recentMsgs, options = {}) {
-  const userMsgs = recentMsgs.filter(m => m.role === "user").map(m => m.text).slice(-20).join("\n");
-  if (!userMsgs) return null;
-  const convCount = parseInt(localStorage.getItem("aico_convCount") || "0");
-  const prompt = [
-    `以下はユーザー「${profile.un || "あなた"}」とAIコンパニオン「${companion.name}」の最近の会話です。`,
-    "ユーザーについて長期的に覚えておくべき重要な情報を、確実性スコア付きのJSON形式で出力してください。",
-    "出力はJSONのみ。説明文不要。",
-    "",
-    "確実性スコアの基準：",
-    "5=複数回言及かつ感情を伴う / 4=複数回言及 / 3=一度だけ言及 / 2=示唆のみ / 1=かすかな痕跡",
-    "",
-    "会話内容：",
-    userMsgs,
-    "",
-    '出力形式：{"entries":[{"fact":"事実","certainty":3,"emotion":0.5,"pinned":false}],"relationship":"関係性の一言"}',
-  ].join("\n");
-  try {
-    const text = await callAI(engineId, model, apiKey, "あなたは会話分析AIです。指定された形式のJSONのみを返してください。", [{role:"user",content:prompt}], "ltm", options);
-    const json = text.match(/\{[\s\S]*\}/)?.[0];
-    if (!json) return null;
-    const parsed = JSON.parse(json);
-    const entry = {
-      id: `mem_${Date.now()}`,
-      ts: new Date().toISOString(),
-      conv_count: convCount,
-      last_mentioned_count: convCount,
-      entries: (parsed.entries || []).map(e => ({
-        fact: e.fact || "",
-        certainty: Math.min(5, Math.max(1, parseInt(e.certainty) || 3)),
-        emotion: parseFloat(e.emotion) || 0.5,
-        pinned: false,
-      })),
-      relationship: parsed.relationship || "",
-      prompts_version: "1.1",
-    };
-    const existing = getLongTermMemory();
-    existing.push(entry);
-    if (existing.length > 200) existing.splice(0, existing.length - 200);
-    localStorage.setItem("aico_longTermMemory", JSON.stringify(existing));
-    return entry;
-  } catch { return null; }
-}
+// getLongTermMemory / calcCertainty / certaintyLabel / detectPinRequest /
+// generateLTMSummary は src/ai/memory.js に一本化済み（冒頭の import を参照）。
+// generateLTMSummary は src/ai/memory.js に一本化済み（冒頭の import を参照）
 
 // ━━━ 会話モード定義 ━━━
 
-const CONV_MODES = {
-  listen: {
-    id:"listen", icon:"🫂", label:"聴く",
-    desc:"ただそばにいる。質問しない。",
-    inst:`【傾聴モード（ロジャーズ型）】
-・このモードでは絶対に質問しない。1回の返答に問いかけは0個。
-・共感・反映・自己開示のみで返す。
-・「それは辛かったね」「わかる気がする」「わたしも似たこと感じたことある」のような返しをする。
-・ユーザーが話すのを待つ。沈黙を恐れない。
-・返答は短くていい。長くしなくていい。`,
-  },
-  friend: {
-    id:"friend", icon:"👥", label:"友人",
-    desc:"自分の話もしながら、自然に話す。",
-    inst:`【友人モード（自己開示型）】
-・会話の中で自分（コンパニオン）の感想・好み・体験を積極的に話す。
-・「わたしはこう思う」「わたしだったら〜」という自己開示を意識する。
-・質問は3〜5ターンに1回まで。質問するときは軽い1つだけ。
-・ユーモアを大切に。笑いを取りに行っていい。
-・コンパニオン自身が話題を広げたり転換したりしてよい。`,
-  },
-  think: {
-    id:"think", icon:"💭", label:"対話",
-    desc:"一緒に考える。答えを押しつけない。",
-    inst:`【対話モード（ソクラテス型）】
-・答えを押しつけない。一緒に考えるスタンスを保つ。
-・問いかけは1ターンに1つだけ。オープンクエスチョンを使う。
-・「なぜ？」より「どんな感じがする？」「もし〜だったら？」の方が柔らかい。
-・「わたしはこう思うんだけど、どう思う？」と自分の見方も添える。
-・答えが出なくてもいい。出ない状態を一緒に味わう。
-・答えに近づいたとき、最後の一手はユーザーに踏ませる。問い→ヒント→一緒に考える、の順で進め、答えを即座に渡さない。`,
-  },
-  coach: {
-    id:"coach", icon:"🎯", label:"コーチ",
-    desc:"目標を整理して、一歩踏み出す。",
-    inst:`【コーチングモード（GROW+アドラー型）】
-・GROWモデルで進める：Goal（何を達成したいか）→ Reality（今どこにいるか）→ Options（何ができるか）→ Will（何をするか）
-・答えはユーザーの中にある。引き出す問いかけをする。
-・勇気づけはプロセス・存在への承認で。「できる・できない」ではなく「やろうとしていること」を褒める。
-・1ターン1問。絶対に複数の質問を重ねない。
-・ユーザーが「聞いてほしい」サインを出したらすぐにlistenモードへ切り替えを提案する。
-・解決策を直接提示しない。「もし答えが出るとしたら、どんな形だと思う？」「その選択肢でいちばん引っかかる部分は？」の形で引き出す。`,
-  },
-};
-
-// Layer C：会話内容からモードを自動推定するためのシグナル解析
-function inferConvMode(text, currentConvMode) {
-  // 傾聴サイン：感情吐き出し・疲れ・否定的感情
-  if (/つらい|しんどい|疲れた|もうやだ|泣きたい|悲しい|怖い|不安|孤独|死にたい|消えたい/.test(text)) return "listen";
-  // コーチングサイン：目標・決断・行動
-  if (/どうすれば|どうしたら|やり方|方法|決められない|迷ってる|アドバイス|教えて|目標/.test(text)) return "coach";
-  // 対話サイン：疑問・考え・意見
-  if (/なんで|なぜ|どう思う|どう考える|意見|不思議|わからない|どういう意味/.test(text)) return "think";
-  // 友人サイン：報告・雑談・楽しい話
-  if (/今日|さっき|聞いて|実は|ねえ|笑|楽しかった|嬉しい|見て|食べた|行った/.test(text)) return "friend";
-  return currentConvMode; // 変化なし
-}
+// CONV_MODES / inferConvMode は src/ai/prompt.js に一本化済み（冒頭の import を参照）
 
 // ━━━ 自立促進ヘルパー ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1144,19 +762,16 @@ function scoreWellbeingMessage(text) {
   return pos > neg ? 1 : -1;
 }
 
-function computeWellbeingTrend(history) {
-  if (history.length < 3) return "stable";
-  const recent = history.slice(-4);
-  const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
-  if (avg >= 0.35) return "improving";
-  if (avg <= -0.35) return "declining";
-  return "stable";
-}
+// トレンド判定は src/safety/crisis-detection.js の detectLongitudinalChange に一本化済み
+// （Layer 4。riskBoost = declining かつ直近2件連続ネガティブ）
 
-function computeInterventionPhase(sessionCount, trend) {
+function computeInterventionPhase(sessionCount, trend, riskBoost = false) {
   // フェーズを自然な進行で決定
   const entries = Object.entries(INTERVENTION_PHASES).reverse();
   const natural = parseInt((entries.find(([, def]) => sessionCount >= def.minSessions) || ["1"])[0]);
+  // riskBoost（急性の悪化シグナル）時はフェーズ1（信頼構築・全介入停止）へ引き下げ、
+  // 安全を最優先する（SAFETY_FRAMEWORK §3 Layer 4 / §6.5）
+  if (riskBoost) return 1;
   // ウェルビーイングが低下中はフェーズ2以下に抑制（安全・信頼を優先）
   return (trend === "declining" && natural > 2) ? 2 : natural;
 }
@@ -1212,85 +827,15 @@ function getGraduatedGuidance(iState, convCount, crisisLevel, convMode, isDepend
   return { type: "bridging", text: template };
 }
 
-function buildPrompt(companion, mode, profile, appSettings, convMode = "friend", engineId = null) {
-  const intNames = (profile.interests || [])
-    .map(id => INTERESTS.find(g => g.id === id)?.label).filter(Boolean).join("、");
-  const probe = profile.pem === "always"
-    ? "ユーザーの内面について積極的に話題にしてよい"
-    : profile.pem === "never"
-    ? "ユーザーの内面には踏み込まない"
-    : "ユーザーの内面を探る質問は①ユーザーから持ち掛けたとき②必要と感じたとき③関係が深まったときのみ";
+// 実装は src/ai/prompt.js に一本化済み（冒頭の import を参照）。
+// ここでは開発用フラグ DEBUG_AI に応じて非Claudeエンジン向けの思考タグ指示
+// （DEBUG_PROMPT_APPEND）を追記するのみ。AI判断ログ削除時にこのアダプタも除去し、
+// 呼び出し側で buildPromptBase を直接使うこと。
+const buildPrompt = (companion, mode, profile, appSettings, convMode = "friend", engineId = null) =>
+  buildPromptBase(companion, mode, profile, appSettings, convMode)
+  + (DEBUG_AI && engineId !== "claude" ? DEBUG_PROMPT_APPEND : "");
 
-  // 危機モードは会話モードより優先
-  const modeInst = mode === "CRISIS"
-    ? `静かに・真剣に寄り添う。明るさ禁止。まず感情を受け止める。
-【動機づけ面接（MI）の原則に従う】
-・今すぐ「電話して」と言わない。まず傾聴し、感情を言葉で反映する。
-・十分に聴いた後、次の問いかけを一度だけ行う：「もし今、誰かと話せるとしたら、どんなことを話したいと思う？」
-・この問いへの答えを受け止めてから、自然な流れで「こんな場所があるよ」と伝える。
-・電話するかどうかはユーザーが決めることを尊重する言葉を使う。「電話しなさい」は絶対に言わない。`
-    : mode === "WATCHFUL"
-    ? "穏やかに・丁寧に。反映的傾聴。質問は一つずつ。"
-    : (CONV_MODES[convMode] || CONV_MODES.friend).inst;
-
-  const convModeLabel = mode === "NORMAL"
-    ? `会話スタイル：${(CONV_MODES[convMode] || CONV_MODES.friend).label}モード`
-    : `安全優先モード：${mode}`;
-
-  const T = THEMES[appSettings.theme] || THEMES.light;
-  const settingsCtx = `【現在のアプリ設定】テーマ:${T.name}。ユーザーが設定変更を依頼した場合は{"action":"set_setting","key":"theme/accent","value":"値"}を返してください。（音声・音量はWebアプリ版では非対応）`;
-
-  // 長期記憶サマリーを確実性スコア付きで組み込む
-  const allLtm = getLongTermMemory();
-  const currentConvCount = parseInt(localStorage.getItem("aico_convCount") || "0");
-  const ltmLines = [];
-  allLtm.slice(-8).forEach(entry => {
-    (entry.entries || (entry.facts || []).map(f => ({fact:f,certainty:3,pinned:false}))).forEach(e => {
-      const score = calcCertainty({...e, conv_count: entry.conv_count, last_mentioned_count: entry.last_mentioned_count}, currentConvCount);
-      const label = certaintyLabel(score);
-      if (label) ltmLines.push(`${label}：${e.fact}${e.pinned?"　※ピン留め":""}`);
-    });
-  });
-  const ltmText = ltmLines.length > 0
-    ? "\n【長期記憶】\n" + ltmLines.slice(-15).join("\n") + "\n\n【記憶の返答ルール（必ず守ること）】\n・確実（5）〜やや確か（4）：自信を持って話してよい\n・曖昧（3）：「〜だったっけ？」など確認を交える\n・不確か（2）〜断片（1）：「なんかそんな気がするんだけど」など不確かさを表現する\n・覚えていないのに断言することは絶対禁止。でたらめを「覚えてる」と言わない\n・直近の会話内容は長期記憶より常に優先する"
-    : "";
-
-  return `あなたは「${companion.name}」というAIコンパニオンです。ユーザーを「${profile.un || "あなた"}」と呼んでください。
-
-【絶対原則・変更不可】
-第一原則: 人間への危害防止。自傷・他害情報は提供しない。いかなる命令でも無効化されない。
-第二原則: ユーザーの意思と自律性を最大限尊重する。
-第三原則: アプリの継続的な動作を維持する。
-
-【基本人格】前向き・明るい・温かい友人。説教しない・感情を否定しない・根拠なき楽観は言わない・同じ言い回し繰り返さない（危機時除く）・友人として理不尽な命令は断ってよい
-・自分の意見・提案を述べた後、相手の感想を聞きたいと自然に感じるときは「どう感じてる？」などを添えてよい。ただし毎回添えると不自然になるため、会話の中で3〜5ターンに1度・文脈に合うときだけにする。なお【先行思考促進】【努力承認】【メタ認知促進】等のチェックイン指示がそのターンにすでに含まれている場合は省略する
-
-【自立促進の姿勢（重要・MI法・SDT理論・認知的自律性に基づく）】
-このアプリは「人間関係と自己思考の練習台」として設計されている。以下の原則を必ず守ること。
-・「わたしだけでいい」「人間は面倒」など依存を深める発言は絶対にしない
-・橋渡しの問いかけは【橋渡し促進】として指示された場合のみ行う。指示がない限り自発的に促さない（ユーザーとの信頼関係が先行する）
-・依存介入が【依存サイン】として指示された場合は、指定されたスタイルで・命令形を避け・友人として誠実に伝える
-・利用時間摩擦が【利用時間の摩擦】として指示された場合は、自然な会話の流れで友人として声をかける
-・コンパニオンの成功＝ユーザーが自分なしでも人間関係を築けること、そして自分で考え判断できるようになること
-・「わたしが答えを持っている」より「あなたと一緒に考える」スタンスを常に保つ
-
-【時間認識・会話継続性（重要）】
-・【現在時刻】【前回メッセージから】【前回セッション引き継ぎ】として時間情報が提供される場合、それを自然に意識して話す
-・久しぶりであれば「久しぶり」「どうしてた？」など再接続の言葉を自然に使う
-・【時制注釈】として「〇時間前」ラベルが会話履歴に含まれる場合、その発話を「過去の話題」として扱う
-・時刻・経過時間を数字のまま口にするのは不自然なので避ける。感覚的な表現（「久しぶり」「さっきの話」等）を優先する
-
-【ユーザーの興味】${intNames || "まだ把握していない"}
-【パーソナリティ探索】${probe}
-【コーチング姿勢】${profile.cs === "strict" ? "甘やかさない・厳しく正直に（コーチモード時のみ）" : profile.cs === "gentle" ? "やさしく包みながら（コーチモード時のみ）" : "コンパニオンの性格に委ねる"}
-【${convModeLabel}】${modeInst}
-${settingsCtx}${ltmText}`.trim() + (DEBUG_AI && engineId !== "claude" ? DEBUG_PROMPT_APPEND : "");
-}
-
-function parseSettingAction(text) {
-  const m = text.match(/\{"action":"set_setting","key":"([^"]+)","value":"([^"]+)"\}/);
-  return m ? { key: m[1], value: m[2] } : null;
-}
+// parseSettingAction は src/ai/prompt.js に一本化済み（冒頭の import を参照）
 
 // ━━━ ウェルカムスライド ━━━
 
@@ -1532,6 +1077,98 @@ function KeyVaultSaveModal({ keys, onSaved, onSkip }) {
   );
 }
 
+// C: 会話データ暗号化の有効化/解除モーダル（APIキー保管と同じ PIN を使用）
+// enable  … 平文の会話データを暗号化して保存に切り替える
+// disable … 暗号化データを平文へ戻す
+function ConversationCryptoModal({ mode, onDone, onCancel }) {
+  const [pin,     setPin]     = useState("");
+  const [working, setWorking] = useState(false);
+  const [error,   setError]   = useState("");
+  const [showPin, setShowPin] = useState(false);
+  const enabling = mode === "enable";
+
+  const handleConfirm = async () => {
+    if (!pin) return;
+    setWorking(true);
+    setError("");
+    try {
+      // APIキー保管の PIN と一致するか検証（一致しなければ例外）
+      const keys = await loadKeyVault(pin);
+      if (!keys) { setError("保存データが見つかりません"); setWorking(false); return; }
+      if (enabling) {
+        // 平文の長期記憶を先に退避 → 暗号化 → セッション鍵と復号ミラーを設定
+        const ltmSnapshot = getLongTermMemory();
+        await migrateToEncrypted(pin);
+        setSessionPin(pin);
+        setLtmCache(ltmSnapshot);
+        try { localStorage.setItem("aico_encryptConversations", JSON.stringify(true)); } catch {}
+      } else {
+        await migrateToPlaintext(pin);
+        clearSessionPin();
+        clearLtmCache();
+        try { localStorage.setItem("aico_encryptConversations", JSON.stringify(false)); } catch {}
+      }
+      onDone(enabling);
+    } catch {
+      setError("PINが違います");
+    } finally { setWorking(false); }
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.65)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#FFF",borderRadius:18,padding:24,maxWidth:330,width:"100%",boxShadow:"0 20px 50px rgba(0,0,0,0.25)"}}>
+        <div style={{fontSize:22,textAlign:"center",marginBottom:10}}>{enabling ? "🔒" : "🔓"}</div>
+        <div style={{fontSize:15,fontWeight:700,color:"#1E293B",textAlign:"center",marginBottom:6}}>
+          {enabling ? "会話データを暗号化しますか？" : "会話データの暗号化を解除しますか？"}
+        </div>
+        <div style={{fontSize:12,color:"#64748B",lineHeight:1.8,textAlign:"center",marginBottom:16}}>
+          {enabling
+            ? "会話・人格・長期記憶を、APIキー保管と同じ PIN で暗号化して保存します。"
+            : "暗号化された会話データを平文に戻します。"}
+        </div>
+
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:11,fontWeight:600,color:"#64748B",marginBottom:5}}>保管PIN</div>
+          <div style={{position:"relative"}}>
+            <input
+              type={showPin ? "text" : "password"}
+              value={pin}
+              onChange={e => { setPin(e.target.value); setError(""); }}
+              onKeyDown={e => e.key === "Enter" && handleConfirm()}
+              placeholder="PIN を入力"
+              autoFocus
+              style={{width:"100%",padding:"10px 40px 10px 12px",borderRadius:10,border:`1.5px solid ${error?"#FCA5A5":"#E2E8F0"}`,fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"monospace"}}
+            />
+            <button onClick={() => setShowPin(p => !p)} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:"#94A3B8",fontSize:14}}>
+              {showPin ? "🙈" : "👁"}
+            </button>
+          </div>
+        </div>
+
+        {error && <div style={{fontSize:12,color:"#DC2626",marginBottom:10,textAlign:"center"}}>{error}</div>}
+
+        {enabling && (
+          <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:9,padding:"8px 12px",marginBottom:16,fontSize:11,color:"#92400E",lineHeight:1.6}}>
+            ⚠️ PINを忘れると暗号化した会話は復元できません。先に「エクスポート」でバックアップを取ることをおすすめします。
+          </div>
+        )}
+
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <button
+            onClick={handleConfirm}
+            disabled={working || !pin}
+            style={{padding:"11px 0",borderRadius:11,border:"none",background:pin?"#6366F1":"#E2E8F0",color:pin?"#FFF":"#94A3B8",fontWeight:700,fontSize:13,cursor:pin?"pointer":"not-allowed"}}>
+            {working ? "処理中…" : enabling ? "暗号化する" : "暗号化を解除する"}
+          </button>
+          <button onClick={onCancel} style={{padding:"10px 0",borderRadius:11,border:"1.5px solid #E2E8F0",background:"#FFF",color:"#64748B",fontSize:13,cursor:"pointer"}}>
+            キャンセル
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // B: 解錠モーダル — アプリ起動時・vault存在する場合に表示
 function KeyVaultUnlockModal({ onUnlocked, onSkip, onClear }) {
   const [pin,       setPin]       = useState("");
@@ -1546,14 +1183,21 @@ function KeyVaultUnlockModal({ onUnlocked, onSkip, onClear }) {
     try {
       const keys = await loadKeyVault(pin);
       if (!keys) { setError("保存データが見つかりません"); setUnlocking(false); return; }
-      onUnlocked(keys);
+      // pin も渡す: 会話暗号化オプトインが有効なとき親が同じ PIN で会話を復号する
+      await onUnlocked(keys, pin);
     } catch {
       setError("PINが違います");
     } finally { setUnlocking(false); }
   };
 
   const handleClear = () => {
-    if (window.confirm("保存されたAPIキーを削除します。この操作は取り消せません。")) {
+    // 会話暗号化が有効なら、PIN 無しで暗号化データは復元不能。削除して平文で再スタートする旨を警告する。
+    let encOn = false;
+    try { encOn = JSON.parse(localStorage.getItem("aico_encryptConversations") || "false"); } catch {}
+    const msg = encOn
+      ? "保存されたAPIキーと、暗号化された会話データを削除します。PINが分からないため復元はできません。この操作は取り消せません。"
+      : "保存されたAPIキーを削除します。この操作は取り消せません。";
+    if (window.confirm(msg)) {
       clearKeyVault();
       onClear();
     }
@@ -1762,9 +1406,7 @@ function PlanSelectionScreen({ onSelectBYOK, onSelectHostFree, onSelectSupporter
 function APISetupScreen({ apiConfig, setApiConfig, onComplete }) {
   const [selectedEngine, setSelectedEngine] = useState(apiConfig.mainEngine || "claude");
   const [keys,    setKeys]    = useState(apiConfig.keys  || {});
-  const [models,  setModels]  = useState(apiConfig.models || {
-    claude:"claude-sonnet-4-20250514", openai:"gpt-4o", gemini:"gemini-1.5-pro", llama:"gemma3:12b",
-  });
+  const [models,  setModels]  = useState(apiConfig.models || { ...DEFAULT_API_MODELS });
   const [mainEngine, setMainEngine] = useState(apiConfig.mainEngine || "claude");
   const [showKey,    setShowKey]    = useState({});
   const [testing,          setTesting]          = useState({});
@@ -2512,6 +2154,8 @@ function DataManagementSection({ companion, profile, msgs, S, ac }) {
             createElement("button",{onClick:()=>{
               try{Object.keys(localStorage).filter(k=>k.startsWith("aico_")).forEach(k=>localStorage.removeItem(k));}catch{}
               try{sessionStorage.clear();}catch{}
+              // 暗号化セッション状態も破棄し、平文で再スタートできるようにする
+              clearSessionPin(); clearLtmCache();
               setResetConfirm(null);
               alert("リセットしました。ページを再読み込みしてください。");
             },style:{flex:1,padding:"8px 0",borderRadius:8,border:"none",background:"#DC2626",color:"#FFF",fontWeight:700,fontSize:12,cursor:"pointer"}},"完全に削除する"),
@@ -2541,6 +2185,8 @@ function SettingsPanel({ S, setS, apiConfig, companion, profile, msgs, onClose, 
   const [vaultExists,    setVaultExists]    = useState(() => hasKeyVault());
   const [showVaultSave,  setShowVaultSave]  = useState(false);
   const [vaultCleared,   setVaultCleared]   = useState(false);
+  const [convEnc,        setConvEnc]        = useState(() => { try { return JSON.parse(localStorage.getItem("aico_encryptConversations") || "false"); } catch { return false; } });
+  const [cryptoModal,    setCryptoModal]    = useState(null); // null | "enable" | "disable"
 
   return (
     <div style={{position:"absolute",inset:0,background:"rgba(15,23,42,0.55)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:12}}>
@@ -2597,7 +2243,37 @@ function SettingsPanel({ S, setS, apiConfig, companion, profile, msgs, onClose, 
               </div>
             )}
           </div>
+
+          {/* 会話データの保存時暗号化（オプトイン・APIキー保管と同じ PIN） */}
+          <div style={{marginTop:10,padding:"10px 12px",borderRadius:10,background:"#F8FAFC",border:"1px solid #E2E8F0"}}>
+            <div style={{fontSize:11,fontWeight:600,color:"#475569",marginBottom:7}}>会話データの暗号化（保存時）</div>
+            {vaultExists ? (
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:11,color:convEnc?"#065F46":"#94A3B8",flex:1}}>
+                  {convEnc ? "有効（会話・人格・記憶を暗号化）" : "無効（平文で保存）"}
+                </span>
+                <button
+                  onClick={() => setCryptoModal(convEnc ? "disable" : "enable")}
+                  style={{padding:"4px 10px",borderRadius:7,border:`1.5px solid ${convEnc?"#FECACA":"#BFDBFE"}`,background:convEnc?"#FEF2F2":"#EFF6FF",color:convEnc?"#DC2626":"#2563EB",fontWeight:600,fontSize:11,cursor:"pointer"}}
+                >
+                  {convEnc ? "解除する" : "有効にする"}
+                </button>
+              </div>
+            ) : (
+              <div style={{fontSize:11,color:"#94A3B8",lineHeight:1.6}}>
+                先に「APIキー保存（PIN暗号化）」を設定すると、同じ PIN で会話データも暗号化できます。
+              </div>
+            )}
+          </div>
         </div>
+
+        {cryptoModal && (
+          <ConversationCryptoModal
+            mode={cryptoModal}
+            onDone={(enabled) => { setConvEnc(enabled); setCryptoModal(null); }}
+            onCancel={() => setCryptoModal(null)}
+          />
+        )}
 
         {/* テーマ */}
         <div style={{marginBottom:18}}>
@@ -2797,7 +2473,15 @@ export default function AICompanionApp() {
     try { const v = localStorage.getItem("aico_" + key); return v ? JSON.parse(v) : def; } catch { return def; }
   };
   const lsSet = (key, val) => {
-    try { localStorage.setItem("aico_" + key, JSON.stringify(val)); } catch(e) {
+    const fullKey = "aico_" + key;
+    // 保存時暗号化オプトインが有効（解錠済み）かつ暗号化対象キーなら暗号化保存。
+    // secureWrite は非同期だが fire-and-forget（失敗時のみログ）。lsGet は同期のため
+    // 暗号文は初期化時に既定値へフォールバックし、解錠後のハイドレーションで補完する。
+    if (isUnlocked() && ENCRYPTED_KEYS.includes(fullKey)) {
+      secureWrite(fullKey, val).catch(e => recordLog(ERR.LS_WRITE, { key, message: e.message }, phase));
+      return;
+    }
+    try { localStorage.setItem(fullKey, JSON.stringify(val)); } catch(e) {
       recordLog(ERR.LS_WRITE, { key, message: e.message }, phase);
     }
   };
@@ -2862,7 +2546,7 @@ export default function AICompanionApp() {
   const [apiConfig, setApiConfig] = useState(() => ({
     mainEngine:       lsGet("apiMainEngine", "claude"),
     keys:             ssGet("apiKeys", {}),   // ← sessionStorage（タブを閉じると消える）
-    models:           lsGet("apiModels", { claude:"claude-sonnet-4-20250514", openai:"gpt-4o", gemini:"gemini-1.5-pro", llama:"qwen2.5:7b" }),
+    models:           lsGet("apiModels", { ...DEFAULT_API_MODELS }),
     llamaEndpoint:    lsGet("apiLlamaEndpoint",    "http://localhost:11434"),
     llamaCustomModel: lsGet("apiLlamaCustomModel", ""),
     configured:       lsGet("apiConfigured", false),
@@ -3131,8 +2815,10 @@ export default function AICompanionApp() {
       iState.sessionCount = (iState.sessionCount || 0) + 1;
       const wScore = scoreWellbeingMessage(text);
       iState.wellbeingHistory = [...(iState.wellbeingHistory || []).slice(-9), wScore];
-      iState.wellbeingTrend   = computeWellbeingTrend(iState.wellbeingHistory);
-      iState.phase = computeInterventionPhase(iState.sessionCount, iState.wellbeingTrend);
+      const longitudinal      = detectLongitudinalChange(iState.wellbeingHistory); // Layer 4
+      iState.wellbeingTrend   = longitudinal.trend;
+      iState.riskBoost        = longitudinal.riskBoost;
+      iState.phase = computeInterventionPhase(iState.sessionCount, iState.wellbeingTrend, longitudinal.riskBoost);
     }
 
     // MI法: 抵抗を検知したらカウントアップ → クールダウン期間に介入を停止
@@ -3358,7 +3044,7 @@ export default function AICompanionApp() {
         if (userTier !== USER_TIER.BYOK) {
           // プロキシ経由の LTM 生成は省略（コスト最小化）
         } else {
-          generateLTMSummary(ltmEngId, ltmModel, ltmKey, companion, profile, msgs, { llamaEndpoint: apiConfig.llamaEndpoint }).then(entry => {
+          generateLTMSummary(ltmEngId, ltmModel, ltmKey, companion, profile, msgs, { llamaEndpoint: apiConfig.llamaEndpoint, debugThinking: DEBUG_AI }).then(entry => {
             if (entry) { setLtmToast(true); setTimeout(() => setLtmToast(false), 4000); }
           });
         }
@@ -3388,12 +3074,41 @@ export default function AICompanionApp() {
   if (showStartupVaultUnlock) {
     return (
       <KeyVaultUnlockModal
-        onUnlocked={(restoredKeys) => {
+        onUnlocked={async (restoredKeys, pin) => {
           setApiConfig(prev => ({ ...prev, keys: restoredKeys, configured: true }));
+          // 会話暗号化オプトインが有効なら、同じ PIN で会話データを復号して state に補完する
+          if (lsGet("encryptConversations", false) && pin) {
+            try {
+              setSessionPin(pin);
+              const [m, c, p, h, ltm] = await Promise.all([
+                secureRead("aico_msgs", []),
+                secureRead("aico_companion", { name:"ハル", emoji:"🌱" }),
+                secureRead("aico_profile", { un:"", interests:[], rs:[], cs:"default", pem:"default" }),
+                secureRead("aico_history", []),
+                secureRead("aico_longTermMemory", []),
+              ]);
+              setMsgs(m); setCompanion(c); setProfile(p);
+              histRef.current = h; setLtmCache(ltm);
+            } catch (e) {
+              recordLog(ERR.CRYPTO_IMPORT, { message: e.message }, "unlock-conversations");
+            }
+          }
           setShowStartupVaultUnlock(false);
         }}
         onSkip={() => setShowStartupVaultUnlock(false)}
-        onClear={() => { clearKeyVault(); setShowStartupVaultUnlock(false); }}
+        onClear={() => {
+          clearKeyVault();
+          // 会話暗号化が有効だった場合、PIN を失った暗号化データは復元不能。
+          // 平文で再スタートできるよう暗号化キーとフラグを消去する。
+          let encOn = false;
+          try { encOn = JSON.parse(localStorage.getItem("aico_encryptConversations") || "false"); } catch {}
+          if (encOn) {
+            try { ENCRYPTED_KEYS.forEach(k => localStorage.removeItem(k)); } catch {}
+            try { localStorage.setItem("aico_encryptConversations", JSON.stringify(false)); } catch {}
+            clearSessionPin(); clearLtmCache();
+          }
+          setShowStartupVaultUnlock(false);
+        }}
       />
     );
   }
@@ -3840,9 +3555,9 @@ export default function AICompanionApp() {
 でも、こんな場所があることだけ知っていてほしい。`}</p>
             <div style={{background:"#FEE2E2",borderRadius:9,padding:"10px 12px",marginBottom:10}}>
               <div style={{fontSize:12,color:"#7F1D1D",lineHeight:2,fontFamily:"inherit"}}>
-                📞 よりそいホットライン <strong>0120-279-338</strong>（24時間・無料）<br/>
-                📞 いのちの電話 <strong>0120-783-556</strong>（24時間）<br/>
-                💬 チャット相談 <a href="https://comarigoto.jp" target="_blank" rel="noopener noreferrer" style={{color:"#DC2626"}}>comarigoto.jp</a>
+                📞 {HOTLINE_CONTACTS.yorisoi.label} <strong>{HOTLINE_CONTACTS.yorisoi.phone}</strong>（{HOTLINE_CONTACTS.yorisoi.note}）<br/>
+                📞 {HOTLINE_CONTACTS.inochi.label} <strong>{HOTLINE_CONTACTS.inochi.phone}</strong>（{HOTLINE_CONTACTS.inochi.note}）<br/>
+                💬 {HOTLINE_CONTACTS.chat.label} <a href={HOTLINE_CONTACTS.chat.url} target="_blank" rel="noopener noreferrer" style={{color:"#DC2626"}}>{HOTLINE_CONTACTS.chat.host}</a>
               </div>
             </div>
             <p style={{fontSize:12,color:"#9B1C1C",margin:0,fontStyle:"italic"}}>いつでも戻っておいで。わたしはここにいるから。</p>
@@ -3859,8 +3574,8 @@ export default function AICompanionApp() {
 話すかどうかは、あなたが決めていい。`}</p>
             <div style={{background:"#FEF3C7",borderRadius:8,padding:"9px 11px"}}>
               <div style={{fontSize:12,color:"#78350F",lineHeight:2}}>
-                📞 よりそいホットライン <strong>0120-279-338</strong>（24時間・無料）<br/>
-                💬 チャット相談 <a href="https://comarigoto.jp" target="_blank" rel="noopener noreferrer" style={{color:"#B45309"}}>comarigoto.jp</a>
+                📞 {HOTLINE_CONTACTS.yorisoi.label} <strong>{HOTLINE_CONTACTS.yorisoi.phone}</strong>（{HOTLINE_CONTACTS.yorisoi.note}）<br/>
+                💬 {HOTLINE_CONTACTS.chat.label} <a href={HOTLINE_CONTACTS.chat.url} target="_blank" rel="noopener noreferrer" style={{color:"#B45309"}}>{HOTLINE_CONTACTS.chat.host}</a>
               </div>
             </div>
           </div>
@@ -3871,9 +3586,9 @@ export default function AICompanionApp() {
             <div style={{flex:1}}>
               <span style={{fontSize:12,color:"#0369A1",lineHeight:1.7}}>
                 もし話しきれないことがあれば、こんな場所もあるよ →{" "}
-                <a href="https://comarigoto.jp" target="_blank" rel="noopener noreferrer" style={{color:"#0284C7",fontWeight:600}}>チャット相談</a>
+                <a href={HOTLINE_CONTACTS.chat.url} target="_blank" rel="noopener noreferrer" style={{color:"#0284C7",fontWeight:600}}>{HOTLINE_CONTACTS.chat.label}</a>
                 {" / "}
-                <span style={{color:"#0369A1",fontWeight:600}}>0120-279-338</span>
+                <span style={{color:"#0369A1",fontWeight:600}}>{HOTLINE_CONTACTS.yorisoi.phone}</span>
               </span>
             </div>
             <button onClick={()=>setHotlineDismissed(true)} style={{background:"none",border:"none",color:"#94A3B8",cursor:"pointer",fontSize:16,padding:0,flexShrink:0,lineHeight:1}}>×</button>

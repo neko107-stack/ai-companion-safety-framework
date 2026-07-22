@@ -29,10 +29,10 @@ node --experimental-vm-modules node_modules/.bin/jest --testNamePattern="CRITICA
 
 | 層 | パス | 役割 |
 |----|------|------|
-| モノリシック原型 | `ai_companion_prototype.jsx` (約4,100行) | **現在も稼働コードの本体**（UI・`sendMessage()`・介入状態管理 + ロジックの重複コピー） |
-| モジュール実装 | `src/` | 正規モジュール（テスト対象）。ここへの一本化を進行中 |
+| UI・オーケストレーション | `ai_companion_prototype.jsx` (約3,500行) | 稼働アプリの本体（UI・`sendMessage()`・介入状態管理）。コアロジックは `src/` から import する |
+| モジュール実装 | `src/` | **正規モジュール（テスト対象）。ロジックの変更はここで行う** |
 
-> ⚠ **二重実装の移行途上**: `src/main.jsx` は prototype の `AICompanionApp` を描画しており、prototype は危機検知・プロンプト生成・AI呼び出し等のロジックを**内部に重複コピー**として持つ。`src/` の該当モジュールを修正しても、prototype 側の対応箇所を置換するまで稼働アプリには反映されない。一本化の手順と進捗は `PROJECT_REVIEW.md` §4.2 を参照。ロジックを変更する際は**両方の実装を確認**すること。
+> ✅ **二重実装は解消済み**: 危機検知・プロンプト生成・AI呼び出し・暗号化・記憶・ロガー・定数はすべて `src/` に一本化され、prototype は import して使う。`src/` の修正はそのまま稼働アプリに反映される。例外は開発用の2つのアダプタ（`callAI` / `buildPrompt`。`DEBUG_AI` フラグを注入するだけの薄いラッパー）で、AI判断ログのセクションをリリース時に削除する際に一緒に除去する。
 
 ### `src/` モジュール構成と依存関係
 
@@ -70,7 +70,7 @@ src/
 ### データフロー
 
 - **APIキー**: `sessionStorage` に保存（タブを閉じると自動消去）。永続保管を選んだ場合は PIN で暗号化した `aico_apiKeyVault` に保存
-- **会話・設定**: `localStorage` に**平文 JSON** で保存（`aico_msgs` 等）。AES-256-GCM（`src/safety/encryption.js`）が使われるのは**手動エクスポート/インポートと API キーボルトのみ**。保存時暗号化は改善ロードマップ P2（`PROJECT_REVIEW.md` §6）
+- **会話・設定**: `localStorage` に保存。既定は平文 JSON だが、**会話データの保存時暗号化はオプトイン**で提供（`src/safety/secure-storage.js`）。有効化すると `aico_msgs`/`aico_history`/`aico_companion`/`aico_profile`/`aico_longTermMemory` を API キーボルトと同じ PIN で AES-256-GCM 暗号化。設定・フラグ系は平文のまま。長期記憶は同期アクセスのため解錠時に復号ミラー（`memory.js` の `setLtmCache`）へ載せる
 - **長期記憶**: `aico_longTermMemory` キーに最大200件。`calcCertainty()` が会話数の経過（elapsed）に応じてスコアを 1.0→0.8→0.6→0.4 に減衰させる
 - **エラーログ**: `aico_errorlog` キーに最大200件。会話内容・APIキー・個人情報は**絶対に含めない**
 
@@ -120,12 +120,12 @@ C-SSRS準拠の4層アーキテクチャ。`detectCrisisFull()` が L1+L2+L3 の
 `recordLog()` の `context` オブジェクトに会話テキスト・APIキー・ユーザー名・個人情報を**絶対に含めない**。`engines.js` の実装パターンを踏襲すること。
 
 ### テスト
-`src/safety/crisis-detection.test.js` と `crisis-detection.test.js`（ルート）が存在する。`src/` 以下のモジュールを参照する方が正規。危機検知ロジックを変更したら対応テストも必ず更新する。
+危機検知のテストは `src/safety/crisis-detection.test.js` に一本化されている（実モジュールを import して検証。旧ルートのインライン再定義版は削除済み）。危機検知ロジックを変更したら対応テストも必ず更新する。「一本化時の検知強化の固定」describe は検知レベルを**下げない**ことを保証するガードなので削除しない。
 
 ## トークン節約のための規約
 
-- `ai_companion_prototype.jsx` は約4,100行のモノリシックファイル。**読む前に `src/` を確認する**。ただし二重実装の移行が終わるまで、ロジック変更時は prototype 内の重複コピーの有無も必ず確認する（`PROJECT_REVIEW.md` §4.2）
+- `ai_companion_prototype.jsx` は約3,500行のモノリシックファイル（UI・オーケストレーション）。コアロジックは `src/` に一本化済みなので、**ロジックの確認・変更は `src/` だけで完結する**
 - ファイル全体が不要なら `offset`/`limit` を使って必要な行だけ読む
 - 定数の確認は `src/constants/index.js` 1ファイルで完結する
 - API呼び出しの実装を確認するなら `src/ai/engines.js` のみ読めば足りる（`api/chat.js` はサーバー側プロキシで別物）
-- 危機検知の実装は `src/safety/crisis-detection.js`、テストは同ディレクトリの `crisis-detection.test.js`（ルートの同名ファイルは旧版）
+- 危機検知の実装は `src/safety/crisis-detection.js`、テストは同ディレクトリの `crisis-detection.test.js`

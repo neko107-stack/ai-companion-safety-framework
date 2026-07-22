@@ -2,25 +2,39 @@
 // POST /api/chat
 // Body: { tier, tierToken, engine, model, systemPrompt, messages }
 //
+// ティア別の engine/model は src/constants/hosted-tiers.js に一元化。
+// リクエストの engine はティア定義と一致することを検証し、model は
+// ティア定義の値で上書きする（クライアント指定を信用しない）。
+// これにより無料ティアが有償モデルを指定する不正・誤用を遮断する。
+//
 // Environment variables required:
-//   GEMINI_API_KEY   — Google AI Studio key (used for HOST_FREE → gemini-2.0-flash)
-//   CLAUDE_API_KEY   — Anthropic key (used for SUPPORTER → claude-haiku-4-5-20251001)
+//   GEMINI_API_KEY   — Google AI Studio key (used for HOST_FREE)
+//   CLAUDE_API_KEY   — Anthropic key (used for SUPPORTER)
 //   STRIPE_SECRET_KEY — Stripe secret key (used to validate SUPPORTER tokens)
+
+import { HOSTED_TIER_MODELS } from "../src/constants/hosted-tiers.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { tier, tierToken, engine, model, systemPrompt, messages } = req.body;
+  const { tier, tierToken, engine, systemPrompt, messages } = req.body;
 
-  if (!tier || !engine || !model || !Array.isArray(messages)) {
+  if (!tier || !engine || !Array.isArray(messages)) {
     return res.status(400).json({ error: "Missing required fields" });
   }
 
-  if (tier !== "HOST_FREE" && tier !== "SUPPORTER") {
+  const tierConfig = HOSTED_TIER_MODELS[tier];
+  if (!tierConfig) {
     return res.status(400).json({ error: "Invalid tier for proxy" });
   }
+
+  // ティア定義とエンジンの一致を強制（モデルは常にティア定義の値を使用）
+  if (engine !== tierConfig.engine) {
+    return res.status(403).json({ error: `Engine not allowed for tier ${tier}` });
+  }
+  const model = tierConfig.model;
 
   // SUPPORTER: validate Stripe checkout session token
   if (tier === "SUPPORTER") {

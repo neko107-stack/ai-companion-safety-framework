@@ -1,9 +1,24 @@
 // 長期記憶サマリー管理モジュール（時間減衰アルゴリズム）
 import { callAI } from "./engines.js";
+import { isUnlocked, secureWrite } from "../safety/secure-storage.js";
+
+const LTM_KEY = "aico_longTermMemory";
+
+// 保存時暗号化（オプトイン）が有効なとき、aico_longTermMemory は暗号文になり
+// 同期的な JSON.parse では読めない。そのため解錠時に復号済みの配列を
+// この「復号ミラー」に載せ、getLongTermMemory はここを同期的に返す。
+// （buildPrompt などが getLongTermMemory を同期呼び出しするため非同期化しない）
+let _ltmCache = null;
+
+// 解錠時に prototype が復号済みの長期記憶を注入する。
+export function setLtmCache(arr) { _ltmCache = Array.isArray(arr) ? arr : null; }
+// ロック/ログアウト時にミラーを破棄する。
+export function clearLtmCache() { _ltmCache = null; }
 
 export function getLongTermMemory() {
+  if (_ltmCache !== null) return _ltmCache;
   try {
-    const raw = localStorage.getItem("aico_longTermMemory");
+    const raw = localStorage.getItem(LTM_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch { return []; }
 }
@@ -31,7 +46,8 @@ export function certaintyLabel(score) {
 export const detectPinRequest   = text => /覚えておいて|絶対忘れないで|ピン留め|必ず覚えて/.test(text);
 export const detectUnpinRequest = text => /忘れていい|覚えなくていい|それはいい/.test(text);
 
-export async function generateLTMSummary(engineId, model, apiKey, companion, profile, recentMsgs) {
+// options は callAI にそのまま透過する（llamaEndpoint / debugThinking 等）
+export async function generateLTMSummary(engineId, model, apiKey, companion, profile, recentMsgs, options = {}) {
   const userMsgs = recentMsgs.filter(m => m.role === "user").map(m => m.text).slice(-20).join("\n");
   if (!userMsgs) return null;
   const convCount = parseInt(localStorage.getItem("aico_convCount") || "0");
@@ -49,7 +65,7 @@ export async function generateLTMSummary(engineId, model, apiKey, companion, pro
     '出力形式：{"entries":[{"fact":"事実","certainty":3,"emotion":0.5,"pinned":false}],"relationship":"関係性の一言"}',
   ].join("\n");
   try {
-    const text = await callAI(engineId, model, apiKey, "あなたは会話分析AIです。指定された形式のJSONのみを返してください。", [{role:"user",content:prompt}]);
+    const text = await callAI(engineId, model, apiKey, "あなたは会話分析AIです。指定された形式のJSONのみを返してください。", [{role:"user",content:prompt}], "ltm", options);
     const json = text.match(/\{[\s\S]*\}/)?.[0];
     if (!json) return null;
     const parsed = JSON.parse(json);
@@ -70,7 +86,13 @@ export async function generateLTMSummary(engineId, model, apiKey, companion, pro
     const existing = getLongTermMemory();
     existing.push(entry);
     if (existing.length > 200) existing.splice(0, existing.length - 200);
-    localStorage.setItem("aico_longTermMemory", JSON.stringify(existing));
+    // 解錠中は暗号化して保存し、復号ミラーも更新する。未解錠（平文モード）は従来どおり。
+    if (isUnlocked()) {
+      _ltmCache = existing;
+      await secureWrite(LTM_KEY, existing);
+    } else {
+      localStorage.setItem(LTM_KEY, JSON.stringify(existing));
+    }
     return entry;
   } catch { return null; }
 }

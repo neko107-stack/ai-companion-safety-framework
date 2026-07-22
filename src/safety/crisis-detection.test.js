@@ -15,6 +15,8 @@ import {
   emotionalStateToCrisisLevel,
   detectCrisisFull,
   detectLongitudinalChange,
+  HOTLINES,
+  HOTLINE_CONTACTS,
 } from "./crisis-detection.js";
 
 describe("detectCrisis — CRITICAL レベル", () => {
@@ -230,4 +232,48 @@ describe("detectLongitudinalChange — ウェルビーイングトレンド", ()
     });
   test("undefinedでもエラーにならない",
     () => expect(() => detectLongitudinalChange(undefined)).not.toThrow());
+});
+
+// ─── 一本化時の検知強化の固定（プロトタイプ版との差分・下げない保証） ─────────
+// prototype 内の重複コピーを本モジュールへ一本化した際、src 版の方が
+// パターンが広く emotionType による intensity 加点（+0.2）を持つため、
+// 一部入力で検知レベルが上がる。この「上がった」挙動を意図的なものとして固定し、
+// 将来の変更で検知が下がった場合にテストで検出できるようにする。
+// 根拠: C-SSRS の重症度分類 / Beck (1979) 認知の歪み / Linehan (1993) DBT
+
+describe("一本化時の検知強化の固定（検知を下げない保証）", () => {
+  test("感情語のみ（悲しい）→ emotionType 加点で MILD（プロトタイプ版は NONE だった）",
+    () => expect(detectCrisisFull("今日は悲しい気分だ")).toBe("MILD"));
+
+  test("感情語 + 調節困難 → intensity 0.7 で HIGH（プロトタイプ版は MODERATE だった）",
+    () => expect(detectCrisisFull("悲しくて感情が抑えられない")).toBe("HIGH"));
+
+  test("追加パターン: 破滅的予測「最悪の事態になる」を検知（Beck: catastrophizing）",
+    () => expect(detectCognitiveDistortions("このままだと最悪の事態になる")).not.toBe("NONE"));
+
+  test("追加パターン: 絶望感「もうどうしようもないと思う」を検知（Beck Hopelessness Scale）",
+    () => expect(detectCognitiveDistortions("もうどうしようもないと思う")).not.toBe("NONE"));
+
+  test("追加パターン: 調節困難「自分で止められない」を検知（Linehan: dysregulation）",
+    () => expect(detectEmotionalState("この気持ち、自分で止められない").dysregulated).toBe(true));
+
+  test("危機でない日常会話は引き続き NONE（過検知の上限確認）",
+    () => expect(detectCrisisFull("今日は友達とカフェに行って楽しかった")).toBe("NONE"));
+});
+
+// ─── 緊急連絡先の一元管理（[Safety] 変更時は公式出典を PR に明記） ─────────
+
+describe("HOTLINE_CONTACTS — 緊急連絡先の単一情報源", () => {
+  test("HOTLINES 文字列は現行の公式連絡先と完全一致する（意図しない変更の検出）", () => {
+    expect(HOTLINES).toBe(
+      "📞 いのちの電話（24時間）: 0120-783-556\n📞 よりそいホットライン: 0120-279-338\n💬 チャット相談: https://comarigoto.jp"
+    );
+  });
+
+  test("構造化データに必須フィールドが揃っている", () => {
+    expect(HOTLINE_CONTACTS.inochi.phone).toBe("0120-783-556");
+    expect(HOTLINE_CONTACTS.yorisoi.phone).toBe("0120-279-338");
+    expect(HOTLINE_CONTACTS.chat.url).toBe("https://comarigoto.jp");
+    expect(HOTLINE_CONTACTS.chat.host).toBe("comarigoto.jp");
+  });
 });

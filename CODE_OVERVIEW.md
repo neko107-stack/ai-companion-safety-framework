@@ -7,8 +7,8 @@
 
 - **目的**: 新規参加者・将来の自分が短時間でコード処理を把握できるようにする（理解負債の解消）。
 - **対象読者**: コードを読む開発者。思想・運用は `README.md` / `SAFETY_FRAMEWORK.md` / `CLAUDE.md` を参照。
-- **正規実装は `src/`**（を目指しているが移行途上）。`ai_companion_prototype.jsx`（4,148行）は元プロトタイプだが、`src/main.jsx` がここから `AICompanionApp` を import しており、**UI とオーケストレーション層（`sendMessage()`・介入状態管理・認知成長スキャフォールディング）は現状この巨大ファイル内に存在する**。
-- **⚠ 二重実装に注意**: prototype が実際に import しているのは `model-discovery.js` と `encryption.js`（エクスポート/インポート関数）のみで、危機検知・プロンプト生成・AI呼び出し・暗号化関数などは **prototype 内に別コピーとして重複定義**されており、稼働時はそちらが使われる。`src/` の該当モジュールを修正しても稼働アプリには反映されない。詳細と解消方針は `PROJECT_REVIEW.md` §1.1・§4.2 を参照。
+- **正規実装は `src/`**。`ai_companion_prototype.jsx`（約3,500行）は UI とオーケストレーション層（`sendMessage()`・介入状態管理・認知成長スキャフォールディング）を担い、コアロジックはすべて `src/` から import する。
+- **✅ 二重実装は解消済み**: かつて prototype 内に存在した危機検知・プロンプト生成・AI呼び出し・暗号化・記憶・ロガー・定数の重複コピーは削除され、`src/` に一本化された。`src/` の修正はそのまま稼働アプリに反映される。残るのは開発用 `DEBUG_AI` フラグを注入する2つの薄いアダプタ（`callAI`/`buildPrompt`）のみ（経緯は `PROJECT_REVIEW.md` §1.1・§4.2）。
 - **更新方針**: `src/` または `api/` の関数を追加・変更・削除したら本書の該当表も更新する。
 
 ## 2. モジュール一覧（src/）
@@ -17,12 +17,14 @@
 |------|------|------------------|----------|
 | `main.jsx` | React エントリ。`ai_companion_prototype.jsx` の `AICompanionApp` を描画 | （default import 起動のみ） | `ai_companion_prototype.jsx` |
 | `constants/index.js` | アプリ全体の定数テーブル | `INTERESTS` `VOICES` `THEMES` `ACCENTS` `AI_ENGINES` `DEFAULT_SETTINGS` `DEFAULT_API_MODELS` | なし |
-| `ai/engines.js` | Claude/OpenAI/Gemini への統一 API アダプタ（ユーザー鍵使用） | `callAI()` `maskKey` | `utils/logger.js` |
-| `ai/memory.js` | 長期記憶 CRUD + 時間減衰スコアリング | `getLongTermMemory()` `calcCertainty()` `certaintyLabel()` `detectPinRequest` `generateLTMSummary()` | `ai/engines.js` |
+| `constants/hosted-tiers.js` | ホスト型ティア別モデルの単一情報源 | `HOSTED_TIER_MODELS` | なし |
+| `ai/engines.js` | Claude/OpenAI/Gemini/Llama への統一 API アダプタ（ユーザー鍵使用） | `callAI()` `maskKey` | `utils/logger.js` |
+| `ai/memory.js` | 長期記憶 CRUD + 時間減衰 + 復号ミラー | `getLongTermMemory()` `calcCertainty()` `certaintyLabel()` `detectPinRequest` `generateLTMSummary()` `setLtmCache()` `clearLtmCache()` | `ai/engines.js` `safety/secure-storage.js` |
 | `ai/prompt.js` | システムプロンプト生成・会話モード推定 | `CONV_MODES` `inferConvMode()` `buildPrompt()` `parseSettingAction()` | `constants/index.js` `ai/memory.js` |
 | `ai/model-discovery.js` | 各社の list models API からモデルを動的検出 | `discoverModels()` `mergeModels()` | `utils/logger.js` |
-| `safety/crisis-detection.js` | C-SSRS 準拠 多層危機検知（L1〜L4） | `detectCrisis()` `detectCognitiveDistortions()` `detectEmotionalState()` `detectCrisisFull()` ほか | なし（独立） |
-| `safety/encryption.js` | AES-256-GCM 暗号化・エクスポート/インポート | `encryptData()` `decryptData()` `exportCompanionData()` `importCompanionData()` `collectMigratable()` `applyMigratable()` | なし（Web Crypto） |
+| `safety/crisis-detection.js` | C-SSRS 準拠 多層危機検知（L1〜L4）+ 緊急連絡先 | `detectCrisisFull()` `detectCrisis()` … `HOTLINE_CONTACTS` `HOTLINES` | なし（独立） |
+| `safety/encryption.js` | AES-256-GCM 暗号プリミティブ・エクスポート/インポート | `encryptData()` `decryptData()` `exportCompanionData()` `importCompanionData()` `collectMigratable()` `applyMigratable()` | なし（Web Crypto） |
+| `safety/secure-storage.js` | 会話データの保存時暗号化（オプトイン） | `secureRead()` `secureWrite()` `setSessionPin()` `migrateToEncrypted()` `ENCRYPTED_KEYS` | `safety/encryption.js` |
 | `utils/logger.js` | PII 不含エラーログ | `recordLog()` `getLogs()` `exportLogs()` `clearLogs()` `classifyApiError()` `ERR` | なし |
 
 ## 3. 依存関係図
@@ -50,7 +52,7 @@ flowchart TD
 
 依存の主軸: `prompt.js → memory.js → engines.js → logger.js`。`crisis-detection.js` と `encryption.js` は外部依存を持たない独立モジュール。
 
-> 注: prototype から各 src モジュールへの矢印は**意図されたアーキテクチャ**を表す。実際の稼働時は prototype 内の重複コピーが使われるものが多い（§1 の「二重実装に注意」参照）。実際に import されているのは `model-discovery.js` と `encryption.js` のエクスポート/インポート関数のみ。
+> 注: prototype から各 src モジュールへの矢印は実際の import 関係を表す（二重実装解消済み・§1 参照）。
 
 ## 4. 処理フロー: 1ターンの流れ
 
@@ -107,7 +109,7 @@ sequenceDiagram
 | `callAI(engineId, model, apiKey, systemPrompt, messages, phase="chat")` | エンジン ID に応じて Anthropic / OpenAI / Gemini の各 REST API を呼び分け、応答テキストを抽出して返す。ネットワーク・API エラーは `recordLog()` 後に throw | in: エンジン種別・モデル・鍵・プロンプト / out: `string`（応答） |
 | `maskKey(k)` | API キーを先頭8文字＋末尾4文字でマスク表示 | in: 鍵文字列 / out: マスク文字列 |
 
-補足: `llama` はローカル動作前提で、本関数では未サポートとして throw する。
+補足: `llama` は `options.llamaEndpoint`（既定 `http://localhost:8080`、Ollama は 11434 判定）のローカルサーバーへ OpenAI 互換形式で送信。`options.debugThinking` は開発用で、Claude の Extended Thinking を有効化し `<thinking>/<response>` 形式で返す。
 
 ### ai/memory.js — 長期記憶
 
@@ -117,7 +119,7 @@ sequenceDiagram
 | `calcCertainty(entry, currentConvCount)` | 経過会話数に応じ確実性スコアを減衰（>300→×0.4, >100→×0.6, >20→×0.8）。`pinned` は常に 5。0〜5 に正規化 | in: エントリ・現会話数 / out: `0..5` |
 | `certaintyLabel(score)` | スコア→日本語ラベル（確実(5)〜断片(1)、0 は `null`＝忘却） | in: `0..5` / out: ラベル or null |
 | `detectPinRequest(text)` / `detectUnpinRequest(text)` | ピン留め／解除の依頼文を正規表現で検出 | in: text / out: `boolean` |
-| `generateLTMSummary(engineId, model, apiKey, companion, profile, recentMsgs)` | 直近20件のユーザー発話を AI に渡し、確実性付き JSON の記憶エントリを生成・保存（最大200件、超過分は古い順に削除） | out: 生成エントリ or null |
+| `generateLTMSummary(engineId, model, apiKey, companion, profile, recentMsgs, options)` | 直近20件のユーザー発話を AI に渡し、確実性付き JSON の記憶エントリを生成・保存（最大200件、超過分は古い順に削除）。`options` は `callAI` に透過 | out: 生成エントリ or null |
 
 ### ai/prompt.js — プロンプト生成
 
