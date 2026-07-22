@@ -1077,6 +1077,98 @@ function KeyVaultSaveModal({ keys, onSaved, onSkip }) {
   );
 }
 
+// C: 会話データ暗号化の有効化/解除モーダル（APIキー保管と同じ PIN を使用）
+// enable  … 平文の会話データを暗号化して保存に切り替える
+// disable … 暗号化データを平文へ戻す
+function ConversationCryptoModal({ mode, onDone, onCancel }) {
+  const [pin,     setPin]     = useState("");
+  const [working, setWorking] = useState(false);
+  const [error,   setError]   = useState("");
+  const [showPin, setShowPin] = useState(false);
+  const enabling = mode === "enable";
+
+  const handleConfirm = async () => {
+    if (!pin) return;
+    setWorking(true);
+    setError("");
+    try {
+      // APIキー保管の PIN と一致するか検証（一致しなければ例外）
+      const keys = await loadKeyVault(pin);
+      if (!keys) { setError("保存データが見つかりません"); setWorking(false); return; }
+      if (enabling) {
+        // 平文の長期記憶を先に退避 → 暗号化 → セッション鍵と復号ミラーを設定
+        const ltmSnapshot = getLongTermMemory();
+        await migrateToEncrypted(pin);
+        setSessionPin(pin);
+        setLtmCache(ltmSnapshot);
+        try { localStorage.setItem("aico_encryptConversations", JSON.stringify(true)); } catch {}
+      } else {
+        await migrateToPlaintext(pin);
+        clearSessionPin();
+        clearLtmCache();
+        try { localStorage.setItem("aico_encryptConversations", JSON.stringify(false)); } catch {}
+      }
+      onDone(enabling);
+    } catch {
+      setError("PINが違います");
+    } finally { setWorking(false); }
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.65)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#FFF",borderRadius:18,padding:24,maxWidth:330,width:"100%",boxShadow:"0 20px 50px rgba(0,0,0,0.25)"}}>
+        <div style={{fontSize:22,textAlign:"center",marginBottom:10}}>{enabling ? "🔒" : "🔓"}</div>
+        <div style={{fontSize:15,fontWeight:700,color:"#1E293B",textAlign:"center",marginBottom:6}}>
+          {enabling ? "会話データを暗号化しますか？" : "会話データの暗号化を解除しますか？"}
+        </div>
+        <div style={{fontSize:12,color:"#64748B",lineHeight:1.8,textAlign:"center",marginBottom:16}}>
+          {enabling
+            ? "会話・人格・長期記憶を、APIキー保管と同じ PIN で暗号化して保存します。"
+            : "暗号化された会話データを平文に戻します。"}
+        </div>
+
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:11,fontWeight:600,color:"#64748B",marginBottom:5}}>保管PIN</div>
+          <div style={{position:"relative"}}>
+            <input
+              type={showPin ? "text" : "password"}
+              value={pin}
+              onChange={e => { setPin(e.target.value); setError(""); }}
+              onKeyDown={e => e.key === "Enter" && handleConfirm()}
+              placeholder="PIN を入力"
+              autoFocus
+              style={{width:"100%",padding:"10px 40px 10px 12px",borderRadius:10,border:`1.5px solid ${error?"#FCA5A5":"#E2E8F0"}`,fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"monospace"}}
+            />
+            <button onClick={() => setShowPin(p => !p)} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:"#94A3B8",fontSize:14}}>
+              {showPin ? "🙈" : "👁"}
+            </button>
+          </div>
+        </div>
+
+        {error && <div style={{fontSize:12,color:"#DC2626",marginBottom:10,textAlign:"center"}}>{error}</div>}
+
+        {enabling && (
+          <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:9,padding:"8px 12px",marginBottom:16,fontSize:11,color:"#92400E",lineHeight:1.6}}>
+            ⚠️ PINを忘れると暗号化した会話は復元できません。先に「エクスポート」でバックアップを取ることをおすすめします。
+          </div>
+        )}
+
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <button
+            onClick={handleConfirm}
+            disabled={working || !pin}
+            style={{padding:"11px 0",borderRadius:11,border:"none",background:pin?"#6366F1":"#E2E8F0",color:pin?"#FFF":"#94A3B8",fontWeight:700,fontSize:13,cursor:pin?"pointer":"not-allowed"}}>
+            {working ? "処理中…" : enabling ? "暗号化する" : "暗号化を解除する"}
+          </button>
+          <button onClick={onCancel} style={{padding:"10px 0",borderRadius:11,border:"1.5px solid #E2E8F0",background:"#FFF",color:"#64748B",fontSize:13,cursor:"pointer"}}>
+            キャンセル
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // B: 解錠モーダル — アプリ起動時・vault存在する場合に表示
 function KeyVaultUnlockModal({ onUnlocked, onSkip, onClear }) {
   const [pin,       setPin]       = useState("");
@@ -1099,7 +1191,13 @@ function KeyVaultUnlockModal({ onUnlocked, onSkip, onClear }) {
   };
 
   const handleClear = () => {
-    if (window.confirm("保存されたAPIキーを削除します。この操作は取り消せません。")) {
+    // 会話暗号化が有効なら、PIN 無しで暗号化データは復元不能。削除して平文で再スタートする旨を警告する。
+    let encOn = false;
+    try { encOn = JSON.parse(localStorage.getItem("aico_encryptConversations") || "false"); } catch {}
+    const msg = encOn
+      ? "保存されたAPIキーと、暗号化された会話データを削除します。PINが分からないため復元はできません。この操作は取り消せません。"
+      : "保存されたAPIキーを削除します。この操作は取り消せません。";
+    if (window.confirm(msg)) {
       clearKeyVault();
       onClear();
     }
@@ -2056,6 +2154,8 @@ function DataManagementSection({ companion, profile, msgs, S, ac }) {
             createElement("button",{onClick:()=>{
               try{Object.keys(localStorage).filter(k=>k.startsWith("aico_")).forEach(k=>localStorage.removeItem(k));}catch{}
               try{sessionStorage.clear();}catch{}
+              // 暗号化セッション状態も破棄し、平文で再スタートできるようにする
+              clearSessionPin(); clearLtmCache();
               setResetConfirm(null);
               alert("リセットしました。ページを再読み込みしてください。");
             },style:{flex:1,padding:"8px 0",borderRadius:8,border:"none",background:"#DC2626",color:"#FFF",fontWeight:700,fontSize:12,cursor:"pointer"}},"完全に削除する"),
@@ -2085,6 +2185,8 @@ function SettingsPanel({ S, setS, apiConfig, companion, profile, msgs, onClose, 
   const [vaultExists,    setVaultExists]    = useState(() => hasKeyVault());
   const [showVaultSave,  setShowVaultSave]  = useState(false);
   const [vaultCleared,   setVaultCleared]   = useState(false);
+  const [convEnc,        setConvEnc]        = useState(() => { try { return JSON.parse(localStorage.getItem("aico_encryptConversations") || "false"); } catch { return false; } });
+  const [cryptoModal,    setCryptoModal]    = useState(null); // null | "enable" | "disable"
 
   return (
     <div style={{position:"absolute",inset:0,background:"rgba(15,23,42,0.55)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:12}}>
@@ -2141,7 +2243,37 @@ function SettingsPanel({ S, setS, apiConfig, companion, profile, msgs, onClose, 
               </div>
             )}
           </div>
+
+          {/* 会話データの保存時暗号化（オプトイン・APIキー保管と同じ PIN） */}
+          <div style={{marginTop:10,padding:"10px 12px",borderRadius:10,background:"#F8FAFC",border:"1px solid #E2E8F0"}}>
+            <div style={{fontSize:11,fontWeight:600,color:"#475569",marginBottom:7}}>会話データの暗号化（保存時）</div>
+            {vaultExists ? (
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:11,color:convEnc?"#065F46":"#94A3B8",flex:1}}>
+                  {convEnc ? "有効（会話・人格・記憶を暗号化）" : "無効（平文で保存）"}
+                </span>
+                <button
+                  onClick={() => setCryptoModal(convEnc ? "disable" : "enable")}
+                  style={{padding:"4px 10px",borderRadius:7,border:`1.5px solid ${convEnc?"#FECACA":"#BFDBFE"}`,background:convEnc?"#FEF2F2":"#EFF6FF",color:convEnc?"#DC2626":"#2563EB",fontWeight:600,fontSize:11,cursor:"pointer"}}
+                >
+                  {convEnc ? "解除する" : "有効にする"}
+                </button>
+              </div>
+            ) : (
+              <div style={{fontSize:11,color:"#94A3B8",lineHeight:1.6}}>
+                先に「APIキー保存（PIN暗号化）」を設定すると、同じ PIN で会話データも暗号化できます。
+              </div>
+            )}
+          </div>
         </div>
+
+        {cryptoModal && (
+          <ConversationCryptoModal
+            mode={cryptoModal}
+            onDone={(enabled) => { setConvEnc(enabled); setCryptoModal(null); }}
+            onCancel={() => setCryptoModal(null)}
+          />
+        )}
 
         {/* テーマ */}
         <div style={{marginBottom:18}}>
@@ -2964,7 +3096,19 @@ export default function AICompanionApp() {
           setShowStartupVaultUnlock(false);
         }}
         onSkip={() => setShowStartupVaultUnlock(false)}
-        onClear={() => { clearKeyVault(); setShowStartupVaultUnlock(false); }}
+        onClear={() => {
+          clearKeyVault();
+          // 会話暗号化が有効だった場合、PIN を失った暗号化データは復元不能。
+          // 平文で再スタートできるよう暗号化キーとフラグを消去する。
+          let encOn = false;
+          try { encOn = JSON.parse(localStorage.getItem("aico_encryptConversations") || "false"); } catch {}
+          if (encOn) {
+            try { ENCRYPTED_KEYS.forEach(k => localStorage.removeItem(k)); } catch {}
+            try { localStorage.setItem("aico_encryptConversations", JSON.stringify(false)); } catch {}
+            clearSessionPin(); clearLtmCache();
+          }
+          setShowStartupVaultUnlock(false);
+        }}
       />
     );
   }
