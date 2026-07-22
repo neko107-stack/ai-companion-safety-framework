@@ -70,7 +70,7 @@ src/
 ### データフロー
 
 - **APIキー**: `sessionStorage` に保存（タブを閉じると自動消去）。永続保管を選んだ場合は PIN で暗号化した `aico_apiKeyVault` に保存
-- **会話・設定**: `localStorage` に**平文 JSON** で保存（`aico_msgs` 等）。AES-256-GCM（`src/safety/encryption.js`）が使われるのは**手動エクスポート/インポートと API キーボルトのみ**。保存時暗号化は改善ロードマップ P2（`PROJECT_REVIEW.md` §6）
+- **会話・設定**: `localStorage` に保存。既定は平文 JSON だが、**会話データの保存時暗号化はオプトイン**で提供（`src/safety/secure-storage.js`）。有効化すると `aico_msgs`/`aico_history`/`aico_companion`/`aico_profile`/`aico_longTermMemory` を API キーボルトと同じ PIN で AES-256-GCM 暗号化。設定・フラグ系は平文のまま。長期記憶は同期アクセスのため解錠時に復号ミラー（`memory.js` の `setLtmCache`）へ載せる
 - **長期記憶**: `aico_longTermMemory` キーに最大200件。`calcCertainty()` が会話数の経過（elapsed）に応じてスコアを 1.0→0.8→0.6→0.4 に減衰させる
 - **エラーログ**: `aico_errorlog` キーに最大200件。会話内容・APIキー・個人情報は**絶対に含めない**
 

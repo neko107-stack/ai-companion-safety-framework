@@ -17,12 +17,14 @@
 |------|------|------------------|----------|
 | `main.jsx` | React エントリ。`ai_companion_prototype.jsx` の `AICompanionApp` を描画 | （default import 起動のみ） | `ai_companion_prototype.jsx` |
 | `constants/index.js` | アプリ全体の定数テーブル | `INTERESTS` `VOICES` `THEMES` `ACCENTS` `AI_ENGINES` `DEFAULT_SETTINGS` `DEFAULT_API_MODELS` | なし |
-| `ai/engines.js` | Claude/OpenAI/Gemini への統一 API アダプタ（ユーザー鍵使用） | `callAI()` `maskKey` | `utils/logger.js` |
-| `ai/memory.js` | 長期記憶 CRUD + 時間減衰スコアリング | `getLongTermMemory()` `calcCertainty()` `certaintyLabel()` `detectPinRequest` `generateLTMSummary()` | `ai/engines.js` |
+| `constants/hosted-tiers.js` | ホスト型ティア別モデルの単一情報源 | `HOSTED_TIER_MODELS` | なし |
+| `ai/engines.js` | Claude/OpenAI/Gemini/Llama への統一 API アダプタ（ユーザー鍵使用） | `callAI()` `maskKey` | `utils/logger.js` |
+| `ai/memory.js` | 長期記憶 CRUD + 時間減衰 + 復号ミラー | `getLongTermMemory()` `calcCertainty()` `certaintyLabel()` `detectPinRequest` `generateLTMSummary()` `setLtmCache()` `clearLtmCache()` | `ai/engines.js` `safety/secure-storage.js` |
 | `ai/prompt.js` | システムプロンプト生成・会話モード推定 | `CONV_MODES` `inferConvMode()` `buildPrompt()` `parseSettingAction()` | `constants/index.js` `ai/memory.js` |
 | `ai/model-discovery.js` | 各社の list models API からモデルを動的検出 | `discoverModels()` `mergeModels()` | `utils/logger.js` |
-| `safety/crisis-detection.js` | C-SSRS 準拠 多層危機検知（L1〜L4） | `detectCrisis()` `detectCognitiveDistortions()` `detectEmotionalState()` `detectCrisisFull()` ほか | なし（独立） |
-| `safety/encryption.js` | AES-256-GCM 暗号化・エクスポート/インポート | `encryptData()` `decryptData()` `exportCompanionData()` `importCompanionData()` `collectMigratable()` `applyMigratable()` | なし（Web Crypto） |
+| `safety/crisis-detection.js` | C-SSRS 準拠 多層危機検知（L1〜L4）+ 緊急連絡先 | `detectCrisisFull()` `detectCrisis()` … `HOTLINE_CONTACTS` `HOTLINES` | なし（独立） |
+| `safety/encryption.js` | AES-256-GCM 暗号プリミティブ・エクスポート/インポート | `encryptData()` `decryptData()` `exportCompanionData()` `importCompanionData()` `collectMigratable()` `applyMigratable()` | なし（Web Crypto） |
+| `safety/secure-storage.js` | 会話データの保存時暗号化（オプトイン） | `secureRead()` `secureWrite()` `setSessionPin()` `migrateToEncrypted()` `ENCRYPTED_KEYS` | `safety/encryption.js` |
 | `utils/logger.js` | PII 不含エラーログ | `recordLog()` `getLogs()` `exportLogs()` `clearLogs()` `classifyApiError()` `ERR` | なし |
 
 ## 3. 依存関係図
