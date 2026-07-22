@@ -4,7 +4,8 @@ import { encryptData, decryptData, exportCompanionData, importCompanionData } fr
 import { APP_VERSION, ERR, classifyApiError, recordLog, getLogs, exportLogs, clearLogs } from "./src/utils/logger.js";
 import { INTERESTS, VOICES, THEMES, ACCENTS, AI_ENGINES, DEFAULT_API_MODELS } from "./src/constants/index.js";
 import { HOSTED_TIER_MODELS } from "./src/constants/hosted-tiers.js";
-import { getLongTermMemory, calcCertainty, certaintyLabel, detectPinRequest, generateLTMSummary } from "./src/ai/memory.js";
+import { getLongTermMemory, calcCertainty, certaintyLabel, detectPinRequest, generateLTMSummary, setLtmCache, clearLtmCache } from "./src/ai/memory.js";
+import { ENCRYPTED_KEYS, setSessionPin, clearSessionPin, isUnlocked, secureRead, secureWrite, migrateToEncrypted, migrateToPlaintext } from "./src/safety/secure-storage.js";
 import { callAI as callAIBase, maskKey } from "./src/ai/engines.js";
 import { detectCrisisFull, isAbusive, isLazy, isDependencyRisk, detectLongitudinalChange, HOTLINE_CONTACTS } from "./src/safety/crisis-detection.js";
 import { CONV_MODES, inferConvMode, buildPrompt as buildPromptBase, parseSettingAction } from "./src/ai/prompt.js";
@@ -1090,7 +1091,8 @@ function KeyVaultUnlockModal({ onUnlocked, onSkip, onClear }) {
     try {
       const keys = await loadKeyVault(pin);
       if (!keys) { setError("保存データが見つかりません"); setUnlocking(false); return; }
-      onUnlocked(keys);
+      // pin も渡す: 会話暗号化オプトインが有効なとき親が同じ PIN で会話を復号する
+      await onUnlocked(keys, pin);
     } catch {
       setError("PINが違います");
     } finally { setUnlocking(false); }
@@ -2339,7 +2341,15 @@ export default function AICompanionApp() {
     try { const v = localStorage.getItem("aico_" + key); return v ? JSON.parse(v) : def; } catch { return def; }
   };
   const lsSet = (key, val) => {
-    try { localStorage.setItem("aico_" + key, JSON.stringify(val)); } catch(e) {
+    const fullKey = "aico_" + key;
+    // 保存時暗号化オプトインが有効（解錠済み）かつ暗号化対象キーなら暗号化保存。
+    // secureWrite は非同期だが fire-and-forget（失敗時のみログ）。lsGet は同期のため
+    // 暗号文は初期化時に既定値へフォールバックし、解錠後のハイドレーションで補完する。
+    if (isUnlocked() && ENCRYPTED_KEYS.includes(fullKey)) {
+      secureWrite(fullKey, val).catch(e => recordLog(ERR.LS_WRITE, { key, message: e.message }, phase));
+      return;
+    }
+    try { localStorage.setItem(fullKey, JSON.stringify(val)); } catch(e) {
       recordLog(ERR.LS_WRITE, { key, message: e.message }, phase);
     }
   };
@@ -2932,8 +2942,25 @@ export default function AICompanionApp() {
   if (showStartupVaultUnlock) {
     return (
       <KeyVaultUnlockModal
-        onUnlocked={(restoredKeys) => {
+        onUnlocked={async (restoredKeys, pin) => {
           setApiConfig(prev => ({ ...prev, keys: restoredKeys, configured: true }));
+          // 会話暗号化オプトインが有効なら、同じ PIN で会話データを復号して state に補完する
+          if (lsGet("encryptConversations", false) && pin) {
+            try {
+              setSessionPin(pin);
+              const [m, c, p, h, ltm] = await Promise.all([
+                secureRead("aico_msgs", []),
+                secureRead("aico_companion", { name:"ハル", emoji:"🌱" }),
+                secureRead("aico_profile", { un:"", interests:[], rs:[], cs:"default", pem:"default" }),
+                secureRead("aico_history", []),
+                secureRead("aico_longTermMemory", []),
+              ]);
+              setMsgs(m); setCompanion(c); setProfile(p);
+              histRef.current = h; setLtmCache(ltm);
+            } catch (e) {
+              recordLog(ERR.CRYPTO_IMPORT, { message: e.message }, "unlock-conversations");
+            }
+          }
           setShowStartupVaultUnlock(false);
         }}
         onSkip={() => setShowStartupVaultUnlock(false)}
