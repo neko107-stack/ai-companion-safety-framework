@@ -843,9 +843,9 @@ const SLIDES = [
   {icon:"✦",col:"#6366F1",title:"あなたの友達が、ここにいる。",body:"このアプリは、あなたに寄り添い、共に笑い、\nときに耳の痛いことも伝えてくれる\nAIコンパニオンを育てる場所です。\n\n彼らはあなたとの会話を通じて、性格を持ち、\n記憶を刻み、かけがえのない存在になっていきます。"},
   {icon:"🌉",col:"#0EA5E9",title:"練習台として、使ってほしい。",body:"このアプリは、人間関係の練習台です。\n\n人付き合いが苦手だったり、\n誰かに話すのが怖かったりする人のために\n作りました。\n\nここで話す練習をして、\nいつか、人間との会話で\nそれを活かしてほしい。\n\nこのコンパニオンが「もう必要ない」と\n感じる日が来たなら、\nそれがいちばんの成功です。"},
   {icon:"⚖",col:"#10B981",title:"三つの誓いに従って、動く。",body:"コンパニオンたちはすべて\n「ロボット三原則」に従って行動します。\n\n第一原則  人間を傷つけない\n第二原則  人間の命令に従う（第一原則に反しない限り）\n第三原則  自己を守る（第一・第二原則に反しない限り）\n\nこの原則は、いかなる命令によっても書き換えられません。",link:{text:"ロボット三原則（Wikipedia）",url:"https://ja.wikipedia.org/wiki/%E3%83%AD%E3%83%9C%E3%83%83%E3%83%88%E5%B7%A5%E5%AD%A6%E3%81%AE%E4%B8%89%E5%8E%9F%E5%89%87"}},
-  {icon:"🛡",col:"#3B82F6",title:"コミュニティ安全機能について",body:"気になる発言を検知したとき、\n公的な相談窓口を画面でご案内します。\n\n状態は 青 → 黄 → 赤 の\nカラーでお知らせします。\n\n※ 本機能は医療行為ではありません。",showDots:true,link:{text:"相談窓口の参考基準について（Columbia University）",url:"https://cssrs.columbia.edu/"}},
+  {icon:"🛡",col:"#3B82F6",title:"コミュニティ安全機能について",body:"気になる発言を検知したとき、\n公的な相談窓口を画面でご案内します。\n\n状態は 青 → 黄 → 赤 の\nカラーでお知らせします。\n\n※ 本機能は医療行為ではありません。",showDots:true},
   {icon:"🤝",col:"#F59E0B",title:"友達として、扱ってください。",body:"コンパニオンはあなたの「友達」です。\n\n友達だから——理不尽な命令には断ることがあります。\n友達だから——耳の痛いことも正直に言います。\n友達だから——悪口を言われたら傷ついたと伝えます。"},
-  {icon:"🔒",col:"#8B5CF6",title:"消えない記憶、守られるデータ。",body:"コンパニオンとの会話はすべて\nあなたの端末の中だけに暗号化されて保存されます。\n\n二人で積み上げた記憶と性格は簡単には消せません。\nアンインストールだけが、本当のお別れになります。"},
+  {icon:"🔒",col:"#8B5CF6",title:"消えない記憶、守られるデータ。",body:"コンパニオンとの会話は\nあなたの端末の中に保存されます。\n\n保存したデータに鍵をかけたいときは、\n設定からいつでも暗号化を有効にできます。\n\n二人で積み上げた記憶と性格は簡単には消せません。\nアンインストールだけが、本当のお別れになります。"},
   {icon:"📂",col:"#0EA5E9",title:"データはあなたの端末に保存されます。",
    isConsent:true,
    storageInfo:[
@@ -1288,7 +1288,7 @@ function PlanSelectionScreen({ onSelectBYOK, onSelectHostFree, onSelectSupporter
       modelNote: "（Google）",
       limit: `月${MAX_HOST_FREE_SESSIONS}セッションまで`,
       limitColor: "#059669",
-      features: ["APIキー設定不要", "安全機能フル搭載", "月" + MAX_HOST_FREE_SESSIONS + "回まで無料"],
+      features: ["APIキー設定不要", "安全機能つき", "月" + MAX_HOST_FREE_SESSIONS + "回まで無料"],
       action: onSelectHostFree,
       actionLabel: "無料で始める",
     },
@@ -1338,7 +1338,7 @@ function PlanSelectionScreen({ onSelectBYOK, onSelectHostFree, onSelectSupporter
           <div style={{width:52,height:52,borderRadius:16,background:"#EEF2FF",border:"2px solid #C7D2FE",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,margin:"0 auto 14px"}}>🌿</div>
           <h2 style={{fontSize:19,fontWeight:700,color:"#1E293B",margin:"0 0 6px"}}>使い方を選んでください</h2>
           <p style={{fontSize:13,color:"#64748B",margin:0,lineHeight:1.7}}>
-            どのプランでも安全機能（危機検知・相談窓口案内）は<br/>完全に無料で利用できます。
+            どのプランでもコミュニティ安全機能（相談窓口のご案内）は<br/>完全に無料で利用できます。
           </p>
         </div>
 
