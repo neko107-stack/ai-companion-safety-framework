@@ -121,8 +121,12 @@ C-SSRS準拠の4層アーキテクチャ。`detectCrisisFull()` が L1+L2+L3 の
 
 保存時暗号化は**オプトインで既定は平文**。UI・法務文書で「暗号化されて保存されます」と断定しないこと。
 
-### エラーログ
+### エラーログ・判断ログ
 `recordLog()` の `context` オブジェクトに会話テキスト・APIキー・ユーザー名・個人情報を**絶対に含めない**。`engines.js` の実装パターンを踏襲すること。
+
+同じ規約が `ai_companion_prototype.jsx` の判断ログ（`debugLog()` / `aico_debuglog`）にも適用される。`aico_debuglog` は `ENCRYPTED_KEYS` 対象外で保存時暗号化が効かず、ログパネルから無暗号 JSON としてエクスポートできるため、**会話本文・AI応答本文・思考本文・長期記憶の `fact` を stage に入れない**（記録してよいのは文字数・危機レベル・モード遷移・LTM件数と確実性・API メタ）。`DEBUG_AI` の既定は `false`。
+
+長期記憶の抽出プロンプト（`src/ai/memory.js` の `generateLTMSummary()`）には、氏名・勤務先・学校名・住所・電話番号・診断名を役割表現へ一般化させる指示が入っている。`src/ai/memory.test.js` の「抽出プロンプトのPII規約」describe はこの指示を保証するガードなので削除しない。
 
 ### テスト
 危機検知のテストは `src/safety/crisis-detection.test.js` に一本化されている（実モジュールを import して検証。旧ルートのインライン再定義版は削除済み）。危機検知ロジックを変更したら対応テストも必ず更新する。「一本化時の検知強化の固定」describe は検知レベルを**下げない**ことを保証するガードなので削除しない。
