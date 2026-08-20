@@ -114,7 +114,7 @@ node --experimental-vm-modules node_modules/.bin/jest src/safety/crisis-detectio
 - **APIキー**: `sessionStorage` に保存（タブを閉じると自動消去）。永続保管を選んだ場合は PIN で AES-256-GCM 暗号化した鍵ボルトに保存
 - **会話データ**: `localStorage` にローカル保存のみ・外部サーバーには保存しない。**保存時暗号化はオプトイン**で、有効化するとAPIキー保管と同じPINで会話・人格・長期記憶をAES-256-GCM暗号化する（未設定時は平文）。なお応答生成のため、会話は選択した AI プロバイダー（またはホスト型プランではプロキシ経由）に送信される
 - **エクスポート**: AES-256-GCM + PBKDF2-SHA256（100,000回）でパスワード保護
-- **エラーログ**: 会話内容・APIキー・個人情報を含まない設計
+- **エラーログ・判断ログ**: 会話内容・APIキー・個人情報を含まない設計（判断ログは開発用で既定は無効。有効時も本文ではなく判断のメタ情報のみを記録）
 - **Gemini利用者**: Google Cloud Console でAPIキーのオリジン制限を推奨
 
 詳細は [`SAFETY_FRAMEWORK.md`](./SAFETY_FRAMEWORK.md) の Section 4 を参照。

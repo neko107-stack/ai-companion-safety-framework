@@ -1,4 +1,5 @@
-// 長期記憶モジュールのユニットテスト（減衰スコア・復号ミラー）
+// 長期記憶モジュールのユニットテスト（減衰スコア・復号ミラー・PII一般化指示）
+import { jest } from "@jest/globals";
 import {
   calcCertainty,
   certaintyLabel,
@@ -7,6 +8,7 @@ import {
   getLongTermMemory,
   setLtmCache,
   clearLtmCache,
+  generateLTMSummary,
 } from "./memory.js";
 
 beforeEach(() => {
@@ -63,5 +65,38 @@ describe("getLongTermMemory — 復号ミラー", () => {
     setLtmCache([{ id: "cached" }]);
     clearLtmCache();
     expect(getLongTermMemory()).toEqual([{ id: "plain" }]);
+  });
+});
+
+describe("generateLTMSummary — 抽出プロンプトのPII規約", () => {
+  const promptSentToAI = async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({ content: [{ type: "text", text: '{"entries":[{"fact":"職場の上司との関係に悩んでいる","certainty":3}],"relationship":"友人"}' }] }),
+    });
+    await generateLTMSummary(
+      "claude", "claude-sonnet-4-6", "sk-ant-x",
+      { name: "ハル" }, { un: "ゆう" },
+      [{ role: "user", text: "今日は疲れた" }],
+    );
+    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    return body.messages[0].content;
+  };
+
+  afterEach(() => { jest.restoreAllMocks(); });
+
+  // 固有名詞をそのまま fact に保存すると、平文 localStorage と AI への再送に
+  // 氏名・勤務先等が残る。抽出時点で一般化させるガードなので削除しない。
+  test("固有名詞を一般化する指示を含む", async () => {
+    const prompt = await promptSentToAI();
+    expect(prompt).toContain("個人を特定しうる固有名詞は fact に書かないこと");
+    expect(prompt).toContain("関係性や役割で一般化して書く");
+  });
+
+  test("一般化の対象カテゴリを明示している", async () => {
+    const prompt = await promptSentToAI();
+    for (const category of ["氏名", "勤務先", "住所", "電話番号", "診断名"]) {
+      expect(prompt).toContain(category);
+    }
   });
 });

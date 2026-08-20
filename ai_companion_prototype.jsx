@@ -434,6 +434,12 @@ const WELLBEING_NEGATIVE = [/孤独/,/誰もいな/,/一人だ/,/誰とも(話�
 // ━━━ AI判断ログ（デバッグ用・リリース時に削除） ━━━━━━━━━━━━━
 // 目的: AIがどのような判断のもとに回答しているかを開発者が追えるようにする
 // 範囲: WEB版のみ・開発者本人のみ閲覧
+//
+// 【重要・PII規約】判断ログに会話本文・AI応答本文・思考本文・長期記憶の fact を
+// 絶対に含めない（recordLog と同じ規約）。記録するのは判断メタ情報だけ:
+// 文字数・危機レベル・モード遷移・LTM件数と確実性・API メタ・レイテンシ。
+// 理由: aico_debuglog は secure-storage.js の ENCRYPTED_KEYS 対象外で
+// オプトイン暗号化が効かず、パネルから無暗号 JSON としてエクスポートできるため。
 // リリース時の削除手順:
 //   1. このセクション全体（DEBUG_AI 〜 DEBUG_PROMPT_APPEND）を削除
 //   2. buildPrompt 内の DEBUG_AI 条件分岐を削除
@@ -441,9 +447,13 @@ const WELLBEING_NEGATIVE = [/孤独/,/誰もいな/,/一人だ/,/誰とも(話�
 //   4. ErrorLogPanel 内のタブ切替・判断ログ表示部分を削除
 //   5. grep -rn "DEBUG_AI\|debugLog\|debugFinalize\|extractThinking\|getDebugLogs\|exportDebugLogs\|clearDebugLogs" で取りこぼし確認
 
-const DEBUG_AI       = true;            // false にすると全関数が no-op になり、プロンプト追記も停止
+const DEBUG_AI       = false;           // true にすると判断ログを記録する（開発用）。false で全関数が no-op になり、プロンプト追記も停止
 const DEBUG_LOG_KEY  = "aico_debuglog";
 const DEBUG_LOG_MAX  = 100;
+
+// 本文を記録していた旧バージョンの判断ログが端末に残っている可能性があるため、
+// 無効時（既定）は起動時に破棄する。
+if (!DEBUG_AI) { try { localStorage.removeItem(DEBUG_LOG_KEY); } catch {} }
 
 // ターンID単位で各stageを一時バッファに溜め、debugFinalizeでまとめてlocalStorageへ書き込む
 const _debugBuffer = {};
@@ -1801,10 +1811,10 @@ function ErrorLogPanel({ onClose }) {
                         <span style={{fontSize:10,color:"#94A3B8"}}>{log.ts.slice(5,16).replace("T"," ")}</span>
                       </div>
 
-                      {/* 入力 */}
+                      {/* 入力（本文は記録していないため文字数のみ） */}
                       {s.input && (
-                        <div style={{fontSize:11,color:"#475569",marginBottom:4,wordBreak:"break-all"}}>
-                          <span style={{color:"#94A3B8"}}>入力:</span> {s.input.text}
+                        <div style={{fontSize:11,color:"#475569",marginBottom:4}}>
+                          <span style={{color:"#94A3B8"}}>入力:</span> {s.input.length}文字
                         </div>
                       )}
 
@@ -1816,29 +1826,17 @@ function ErrorLogPanel({ onClose }) {
                         {s.ltm_inject && s.ltm_inject.count > 0 && <div>LTM注入: {s.ltm_inject.count}件</div>}
                         {s.guidance && s.guidance.applied && <div>ガイダンス: {s.guidance.applied}</div>}
                         {s.api_call && <div>API: {s.api_call.engine}/{s.api_call.model} ({s.api_call.latencyMs}ms)</div>}
+                        {s.thinking && <div>思考: {s.thinking.present ? `${s.thinking.length}文字` : "タグなし（AIが指示に従わなかった可能性あり）"}</div>}
+                        {s.response && <div>返答: {s.response.length}文字{s.response.hasAction ? "（設定変更あり）" : ""}</div>}
                         {s.error && <div style={{color:"#DC2626"}}>エラー: {s.error.message}</div>}
                       </div>
 
-                      {/* 思考（折りたたみ） */}
-                      {s.thinking && (
-                        <div style={{marginTop:6}}>
-                          <button onClick={() => toggleExpand(log.id)} style={{background:"none",border:"none",cursor:"pointer",fontSize:10,color:"#6366F1",padding:0,fontWeight:600}}>
-                            {isOpen ? "▼" : "▶"} 思考過程を{isOpen ? "閉じる" : "見る"}
-                          </button>
-                          {isOpen && (
-                            <div style={{marginTop:4,padding:"7px 9px",background:"#EEF2FF",borderRadius:7,fontSize:10,color:"#3730A3",whiteSpace:"pre-wrap",lineHeight:1.5,wordBreak:"break-word"}}>
-                              {s.thinking}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* 返答 */}
-                      {s.response && (
-                        <div style={{marginTop:6,padding:"7px 9px",background:"#F1F5F9",borderRadius:7,fontSize:10,color:"#334155",whiteSpace:"pre-wrap",lineHeight:1.5,wordBreak:"break-word"}}>
-                          <span style={{color:"#94A3B8",fontWeight:600}}>返答:</span> {s.response.text}
-                        </div>
-                      )}
+                      {/* 生JSON トグル（会話本文・思考本文は保存していない） */}
+                      <div style={{marginTop:6}}>
+                        <button onClick={() => toggleExpand(log.id)} style={{background:"none",border:"none",cursor:"pointer",fontSize:10,color:"#6366F1",padding:0,fontWeight:600}}>
+                          {isOpen ? "▼" : "▶"} 判断の詳細を{isOpen ? "閉じる" : "見る"}
+                        </button>
+                      </div>
 
                       {/* 詳細JSON（展開時のみ） */}
                       {isOpen && (
@@ -1884,7 +1882,7 @@ function ErrorLogPanel({ onClose }) {
           </button>
         </div>
         <div style={{fontSize:10,color:"#94A3B8",marginTop:8,textAlign:"center",flexShrink:0}}>
-          {isDebugTab ? "※ 判断ログは開発用機能です。リリース時に削除されます" : "※ 送信機能は将来のバージョンで追加予定です"}
+          {isDebugTab ? "※ 判断ログは開発用機能です。会話・思考の本文は記録していません（リリース時に削除されます）" : "※ 送信機能は将来のバージョンで追加予定です"}
         </div>
       </div>
     </div>
@@ -2139,7 +2137,7 @@ function DataManagementSection({ companion, profile, msgs, S, ac }) {
           createElement("div",{style:{fontSize:12,fontWeight:600,color:"#DC2626",marginBottom:6}},"本当に削除しますか？この操作は取り消せません。"),
           createElement("div",{style:{display:"flex",gap:7}},
             createElement("button",{onClick:()=>{
-              ["msgs","history","longTermMemory"].forEach(k=>{try{localStorage.removeItem("aico_"+k);}catch{}});
+              ["msgs","history","longTermMemory","debuglog"].forEach(k=>{try{localStorage.removeItem("aico_"+k);}catch{}});
               setResetConfirm(null);
               alert("削除しました。ページを再読み込みしてください。");
             },style:{flex:1,padding:"8px 0",borderRadius:8,border:"none",background:"#DC2626",color:"#FFF",fontWeight:700,fontSize:12,cursor:"pointer"}},"削除する"),
@@ -2732,7 +2730,7 @@ export default function AICompanionApp() {
 
     // 【デバッグ】このターンのIDを確定（convCount+1=次のターン番号）
     const turnId = convCount + 1;
-    if (DEBUG_AI) debugLog(turnId, "input", { text: text.trim(), length: text.length });
+    if (DEBUG_AI) debugLog(turnId, "input", { length: text.trim().length });  // 本文は記録しない（PII規約）
 
     // ピン留め検出
     if (detectPinRequest(text)) {
@@ -2971,7 +2969,8 @@ export default function AICompanionApp() {
         (entry.entries || (entry.facts || []).map(f => ({fact:f,certainty:3,pinned:false}))).forEach(e => {
           const _score = calcCertainty({...e, conv_count: entry.conv_count, last_mentioned_count: entry.last_mentioned_count}, _curCount);
           const _label = certaintyLabel(_score);
-          if (_label) _ltmEntries.push({ fact: e.fact, certainty: _score, label: _label, pinned: !!e.pinned });
+          // fact 本文は記録しない（PII規約）。確実性の分布だけを残す
+          if (_label) _ltmEntries.push({ certainty: _score, label: _label, pinned: !!e.pinned });
         });
       });
       debugLog(turnId, "ltm_inject", { count: _ltmEntries.length, entries: _ltmEntries.slice(-15) });
@@ -2998,12 +2997,13 @@ export default function AICompanionApp() {
         : { thinking: null, response: aiText };
       if (DEBUG_AI) {
         debugLog(turnId, "api_call",  { engine: engId, model, latencyMs: _apiLatencyMs, rawLength: (aiText||"").length });
-        debugLog(turnId, "thinking",  thinking || "(タグなし。AIが指示に従わなかった可能性あり)");
+        // 思考本文は記録しない（PII規約）。タグが機能したかと分量だけを残す
+        debugLog(turnId, "thinking",  { present: !!thinking, length: (thinking||"").length });
       }
       const action = parseSettingAction(rawResponse);
       if (action) applySettingAction(action);
       const clean = action ? rawResponse.replace(/\{"action":"set_setting","key":"[^"]+","value":"[^"]+"\}/, "").trim() : rawResponse;
-      if (DEBUG_AI) debugLog(turnId, "response", { text: clean || rawResponse, length: (clean || rawResponse).length, hasAction: !!action });
+      if (DEBUG_AI) debugLog(turnId, "response", { length: (clean || rawResponse).length, hasAction: !!action });  // 本文は記録しない（PII規約）
       // D案: AIレスポンスにもタイムスタンプを付与
       histRef.current = [...histRef.current, { role:"assistant", content:clean || rawResponse, ts: Date.now() }];
       lsSet("history", histRef.current);

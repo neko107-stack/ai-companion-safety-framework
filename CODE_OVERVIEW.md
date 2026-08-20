@@ -240,13 +240,18 @@ Stripe 決済フロー: 登録ボタン → `stripe-checkout`（セッション�
 |------|--------|--------|------|
 | API キー | `sessionStorage` | — | タブを閉じると消去 |
 | `aico_apiKeyVault` | `localStorage` | PIN 暗号化 | API 鍵保管庫（復元に PIN 要） |
-| `aico_msgs` | `localStorage` | **なし（平文JSON）** | 会話履歴（暗号化は手動エクスポート時のみ。詳細は `PROJECT_REVIEW.md` §4.1 #1） |
-| `aico_longTermMemory` | `localStorage` | — | 長期記憶（最大200件） |
+| `aico_msgs` / `aico_history` | `localStorage` | オプトイン（既定は平文JSON） | 会話履歴（逐語） |
+| `aico_longTermMemory` | `localStorage` | オプトイン（既定は平文JSON） | 長期記憶（最大200件）。固有名詞は抽出プロンプトで一般化させる |
+| `aico_companion` / `aico_profile` | `localStorage` | オプトイン（既定は平文JSON） | コンパニオン名・呼び名／興味などのプロフィール |
+| `aico_settings` | `localStorage` | — | アプリ設定（`ENCRYPTED_KEYS` 非対象） |
 | `aico_convCount` | `localStorage` | — | 会話数（記憶の減衰計算に使用） |
-| `aico_intervention_v1` | `localStorage` | — | 介入状態 |
+| `aico_intervention_v1` | `localStorage` | — | 介入状態（ウェルビーイングは -1/0/1 のスコアのみ） |
 | `aico_phase` / `aico_convMode` / `aico_autoMode` | `localStorage` | — | フェーズ・モード状態 |
 | `aico_errorlog` | `localStorage` | — | エラーログ（PII 不含・最大200件） |
-| `aico_companion` / `aico_profile` / `aico_settings` | `localStorage` | エクスポート時暗号化 | コンパニオン・プロフィール・設定 |
+| `aico_debuglog` | `localStorage` | — | AI判断ログ（`DEBUG_AI` 既定 false・最大100ターン）。**会話/応答/思考の本文と LTM の fact は記録しない** |
+
+> オプトイン暗号化の対象キーの正規定義は `safety/secure-storage.js` の `ENCRYPTED_KEYS`。
+> 未解錠（既定）では平文 JSON、解錠時は `enc:v1:` プレフィックス付きの AES-256-GCM 暗号文。
 
 移行対象キーの正規定義は `safety/encryption.js` の `MIGRATABLE_KEYS` を参照。
 
