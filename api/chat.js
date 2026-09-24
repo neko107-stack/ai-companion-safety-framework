@@ -13,6 +13,7 @@
 //   STRIPE_SECRET_KEY — Stripe secret key (used to validate SUPPORTER tokens)
 
 import { HOSTED_TIER_MODELS } from "../src/constants/hosted-tiers.js";
+import { claudeChatParams, extractClaudeText, claudeEmptyReason } from "../src/ai/claude-response.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -119,10 +120,12 @@ async function callClaude(model, systemPrompt, messages) {
       "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify({ model, max_tokens: 1000, system: systemPrompt, messages }),
+    body: JSON.stringify({ model, ...claudeChatParams(model, 1000), system: systemPrompt, messages }),
   });
   const d = await res.json();
   if (d.error) throw new Error(d.error.message);
-  if (!d.content?.[0]?.text) throw new Error("Invalid response from Claude");
-  return d.content[0].text;
+  // 先頭が thinking ブロックのモデルがあるので text ブロックを連結して読む。refusal は本文を使わない
+  const text = d.stop_reason === "refusal" ? "" : extractClaudeText(d);
+  if (!text.trim()) throw new Error(claudeEmptyReason(d));
+  return text;
 }
