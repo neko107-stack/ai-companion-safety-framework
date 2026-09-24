@@ -9,6 +9,8 @@ import { ENCRYPTED_KEYS, setSessionPin, clearSessionPin, isUnlocked, secureRead,
 import { callAI as callAIBase, maskKey } from "./src/ai/engines.js";
 import { detectCrisisFull, isAbusive, isLazy, isDependencyRisk, detectLongitudinalChange, HOTLINE_CONTACTS } from "./src/safety/crisis-detection.js";
 import { CONV_MODES, inferConvMode, buildPrompt as buildPromptBase, parseSettingAction } from "./src/ai/prompt.js";
+import { AVATAR_STATUS } from "./src/integrations/avatar-bridge.js";
+import { useAvatarBridge } from "./src/integrations/useAvatarBridge.js";
 
 // ━━━ 定数 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -2176,7 +2178,7 @@ function DataManagementSection({ companion, profile, msgs, S, ac }) {
   );
 }
 
-function SettingsPanel({ S, setS, apiConfig, companion, profile, msgs, onClose, onOpenAPISetup, onOpenErrorLog, convMode, setConvMode, autoMode, setAutoMode }) {
+function SettingsPanel({ S, setS, apiConfig, companion, profile, msgs, onClose, onOpenAPISetup, onOpenErrorLog, convMode, setConvMode, autoMode, setAutoMode, avatarStatus }) {
   const ac = ACCENTS[S.accent] || ACCENTS.blue;
   const toggle = k => setS(p => ({...p,[k]:!p[k]}));
   const mainEng = AI_ENGINES.find(e => e.id === apiConfig.mainEngine) || AI_ENGINES[0];
@@ -2307,6 +2309,32 @@ function SettingsPanel({ S, setS, apiConfig, companion, profile, msgs, onClose, 
                 iOS / Android / PC のアプリ版で利用できます。
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* デスクトップのアバター（このPCで起動したアバターアプリが AI の返事を読み上げる） */}
+        <div style={{marginBottom:18}}>
+          <div style={{fontSize:11,fontWeight:600,color:"#64748B",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8}}>デスクトップのアバター</div>
+          <div onClick={() => toggle("avatarBridge")} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 11px",borderRadius:9,cursor:"pointer",marginBottom:6,background:"#F8FAFC",border:"1px solid #E2E8F0"}}>
+            <div style={{width:9,height:9,borderRadius:"50%",flexShrink:0,background:
+              avatarStatus === AVATAR_STATUS.CONNECTED ? "#10B981"
+              : avatarStatus === AVATAR_STATUS.OFF ? "#CBD5E1" : "#F59E0B"}} />
+            <span style={{flex:1,fontSize:13,color:"#1E293B"}}>AIの返事を読み上げてもらう</span>
+            <div style={{width:36,height:20,borderRadius:10,background:S.avatarBridge?ac.main:"#CBD5E1",position:"relative",transition:"all 0.25s",flexShrink:0}}>
+              <div style={{position:"absolute",top:3,left:S.avatarBridge?16:3,width:14,height:14,borderRadius:"50%",background:"#FFF",transition:"all 0.25s"}} />
+            </div>
+          </div>
+          {S.avatarBridge && (
+            <div style={{fontSize:11,color:avatarStatus === AVATAR_STATUS.CONNECTED ? "#065F46" : "#92400E",marginBottom:6}}>
+              {avatarStatus === AVATAR_STATUS.CONNECTED ? "アバターとつながっています"
+                : avatarStatus === AVATAR_STATUS.CONNECTING ? "アバターを探しています…"
+                : "アバターが見つかりません。アバターアプリを起動すると自動でつながります"}
+            </div>
+          )}
+          <div style={{fontSize:11,color:"#94A3B8",lineHeight:1.7}}>
+            このパソコンで起動したアバターアプリが、AIの返事を声に出して読み上げます。
+            送られるのはAIの返事だけで、あなたの発言は送られません。
+            はじめてオンにしたとき、ブラウザがこのパソコン上の別のアプリへのアクセスを許可するか尋ねることがあります。
           </div>
         </div>
 
@@ -2535,8 +2563,10 @@ export default function AICompanionApp() {
   const [ltmToast,       setLtmToast]       = useState(false); // 長期記憶生成通知
   const [S, setS] = useState(() => lsGet("settings", {
     theme:"light", accent:"blue", volume:80, voice:"zundamon",
-    showBlue:true, showYellow:true, showRed:true,
+    showBlue:true, showYellow:true, showRed:true, avatarBridge:false,
   }));
+  // デスクトップのアバターへ AI の発言を送る（設定でオンにしたときだけ接続する）
+  const avatarStatus = useAvatarBridge(msgs, !!S.avatarBridge);
   // 段階的介入状態（セッション数・ウェルビーイング・フェーズ等）
   const [interventionState, setInterventionState] = useState(() => loadInterventionState());
   // APIキーは sessionStorage（セキュリティ考慮・タブを閉じると消える）
@@ -3408,6 +3438,7 @@ export default function AICompanionApp() {
           onOpenErrorLog={() => { setShowSettings(false); setShowErrorLog(true); }}
           convMode={convMode} setConvMode={setConvMode}
           autoMode={autoMode} setAutoMode={setAutoMode}
+          avatarStatus={avatarStatus}
         />
       )}
       {showErrorLog && <ErrorLogPanel onClose={() => setShowErrorLog(false)} />}

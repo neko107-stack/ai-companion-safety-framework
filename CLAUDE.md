@@ -50,6 +50,9 @@ src/
     encryption.js            ← AES-256-GCM + PBKDF2 エクスポート/インポート
   utils/
     logger.js                ← recordLog() — PII不含エラーログ
+  integrations/
+    avatar-bridge.js         ← デスクトップアバター連携（AIの発言だけを ws://127.0.0.1:50110 へ送る）
+    useAvatarBridge.js       ← 上記の React フック（設定 avatarBridge がオンの間だけ接続）
 ```
 
 依存の向き: `prompt.js` → `memory.js` → `engines.js` → `logger.js` ← `engines.js`
