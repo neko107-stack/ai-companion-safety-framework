@@ -44,6 +44,48 @@ describe("callAI — claude", () => {
     expect(out).toBe("<thinking>\n考え中…\n</thinking>\n<response>\n答えです\n</response>");
   });
 
+  test("先頭が thinking ブロックの応答（Opus 5 系など）でも text を返す", async () => {
+    global.fetch.mockResolvedValueOnce(okResponse({
+      stop_reason: "end_turn",
+      content: [
+        { type: "thinking", thinking: "", signature: "sig" },
+        { type: "text", text: "やあ、" },
+        { type: "text", text: "元気？" },
+      ],
+    }));
+    const out = await callAI("claude", "claude-opus-5", "k", "sys", [{ role: "user", content: "hi" }]);
+    expect(out).toBe("やあ、元気？");
+  });
+
+  test("既定で考えるモデルには effort low と広めの max_tokens を送る", async () => {
+    global.fetch.mockResolvedValueOnce(okResponse({ content: [{ type: "text", text: "ok" }] }));
+    await callAI("claude", "claude-sonnet-5", "k", "sys", []);
+    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(body.max_tokens).toBe(4000);
+    expect(body.output_config).toEqual({ effort: "low" });
+    expect(body).not.toHaveProperty("thinking");
+  });
+
+  test("refusal は本文を使わず、分かる文言で throw する（カテゴリだけ記録）", async () => {
+    global.fetch.mockResolvedValueOnce(okResponse({
+      stop_reason: "refusal",
+      stop_details: { type: "refusal", category: "cyber" },
+      content: [{ type: "text", text: "途中まで" }],
+    }));
+    await expect(callAI("claude", "claude-opus-5", "k", "s", [])).rejects.toThrow("返答を控えました");
+    const log = getLogs().slice(-1)[0];
+    expect(log.code).toBe("API_INVALID_RESPONSE");
+    expect(JSON.stringify(log)).not.toContain("途中まで");
+  });
+
+  test("思考だけで max_tokens に達し本文が無いときは、途中で止まったと伝える", async () => {
+    global.fetch.mockResolvedValueOnce(okResponse({
+      stop_reason: "max_tokens",
+      content: [{ type: "thinking", thinking: "", signature: "sig" }],
+    }));
+    await expect(callAI("claude", "claude-opus-5-5", "k", "s", [])).rejects.toThrow("途中で止まりました");
+  });
+
   test("APIエラーは分類ログの上で throw する", async () => {
     global.fetch.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({ error: { type: "auth", message: "bad key" } }) });
     await expect(callAI("claude", "m", "k", "s", [])).rejects.toThrow("bad key");

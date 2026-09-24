@@ -19,6 +19,7 @@
 | `constants/index.js` | アプリ全体の定数テーブル | `INTERESTS` `VOICES` `THEMES` `ACCENTS` `AI_ENGINES` `DEFAULT_SETTINGS` `DEFAULT_API_MODELS` | なし |
 | `constants/hosted-tiers.js` | ホスト型ティア別モデルの単一情報源 | `HOSTED_TIER_MODELS` | なし |
 | `ai/engines.js` | Claude/OpenAI/Gemini/Llama への統一 API アダプタ（ユーザー鍵使用） | `callAI()` `maskKey` | `utils/logger.js` |
+| `ai/claude-response.js` | Claude 応答の読み取り（text ブロックの連結・refusal / max_tokens の文言）と、thinking が既定でオンのモデル（Opus 5 系 / Sonnet 5 / Fable / Mythos）向けの `effort: low`・`max_tokens` 調整。`engines.js` と `api/chat.js` で共用 | `extractClaudeText()` `claudeChatParams()` `thinksByDefault()` `claudeEmptyReason()` | なし（独立） |
 | `ai/memory.js` | 長期記憶 CRUD + 時間減衰 + 復号ミラー | `getLongTermMemory()` `calcCertainty()` `certaintyLabel()` `detectPinRequest` `generateLTMSummary()` `setLtmCache()` `clearLtmCache()` | `ai/engines.js` `safety/secure-storage.js` |
 | `ai/prompt.js` | システムプロンプト生成・会話モード推定 | `CONV_MODES` `inferConvMode()` `buildPrompt()` `parseSettingAction()` | `constants/index.js` `ai/memory.js` |
 | `ai/model-discovery.js` | 各社の list models API からモデルを動的検出 | `discoverModels()` `mergeModels()` | `utils/logger.js` |

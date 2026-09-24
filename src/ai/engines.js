@@ -1,5 +1,6 @@
 // AIエンジン呼び出しモジュール（ユーザーのAPIキーを使用）
 import { ERR, classifyApiError, recordLog } from "../utils/logger.js";
+import { claudeChatParams, extractClaudeText, claudeEmptyReason } from "./claude-response.js";
 
 export const maskKey = k => k ? k.slice(0, 8) + "••••••••••" + k.slice(-4) : "";
 
@@ -28,11 +29,11 @@ export async function callAI(engineId, model, apiKey, systemPrompt, messages, ph
         // 思考量は output_config.effort（"low"|"medium"|"high"）で制御する。
         body: JSON.stringify({
           model,
-          max_tokens: debugThinking ? 4000 : 1000,
           ...(debugThinking ? {
+            max_tokens: 4000,
             thinking: { type: "adaptive" },
             output_config: { effort: "medium" },
-          } : {}),
+          } : claudeChatParams(model, 1000)),
           system: systemPrompt,
           messages,
         }),
@@ -46,6 +47,11 @@ export async function callAI(engineId, model, apiKey, systemPrompt, messages, ph
       const errType = classifyApiError(res.status, d.error.message);
       recordLog(errType, {...ctx, httpStatus: res.status, apiError: d.error.type}, phase);
       throw new Error(d.error.message);
+    }
+    // 安全上の理由で返答が控えられた（HTTP 200 + stop_reason "refusal"）。途中までの本文は使わない
+    if (d.stop_reason === "refusal") {
+      recordLog(ERR.API_RESPONSE, {...ctx, httpStatus: res.status, stopReason: "refusal", category: d.stop_details?.category ?? null}, phase);
+      throw new Error(claudeEmptyReason(d));
     }
     // 【デバッグ】content配列からthinkingブロックとtextブロックを分離して取り出し、
     // extractThinking互換の <thinking>...</thinking>\n<response>...</response> 形式に合成する
@@ -66,11 +72,13 @@ export async function callAI(engineId, model, apiKey, systemPrompt, messages, ph
       const finalThinking = thinkingText.trim() || "(thinking block empty)";
       return `<thinking>\n${finalThinking}\n</thinking>\n<response>\n${cleanResponse}\n</response>`;
     }
-    if (!d.content?.[0]?.text) {
-      recordLog(ERR.API_RESPONSE, {...ctx, httpStatus: res.status}, phase);
-      throw new Error("レスポンスの形式が不正です");
+    // 先頭が thinking ブロックのモデルがあるので、text ブロックをすべて連結して読む
+    const text = extractClaudeText(d);
+    if (!text.trim()) {
+      recordLog(ERR.API_RESPONSE, {...ctx, httpStatus: res.status, stopReason: d.stop_reason ?? null}, phase);
+      throw new Error(claudeEmptyReason(d));
     }
-    return d.content[0].text;
+    return text;
   }
 
   if (engineId === "openai") {
