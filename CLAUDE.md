@@ -15,10 +15,10 @@ npm run test:watch   # テストウォッチモード
 npm run lint         # ESLint (src/**/*.{js,jsx})　※eslint.config.js + ESLint 9（flat config）
 
 # 単一テストファイルを実行
-node --experimental-vm-modules node_modules/.bin/jest src/safety/crisis-detection.test.js
+node --experimental-vm-modules node_modules/jest/bin/jest.js src/safety/crisis-detection.test.js
 
 # 特定のdescribeブロックだけ実行
-node --experimental-vm-modules node_modules/.bin/jest --testNamePattern="CRITICAL"
+node --experimental-vm-modules node_modules/jest/bin/jest.js --testNamePattern="CRITICAL"
 ```
 
 テストは `**/*.test.js` と `src/**/*.test.js` にマッチする。`babel.config.cjs` が Jest 用の Babel 変換を担当し、`package.json` の `jest` フィールドに設定が集約されている。

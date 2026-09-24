@@ -95,7 +95,7 @@ npm install
 npm test
 
 # 危機検知のテストのみ実行
-node --experimental-vm-modules node_modules/.bin/jest src/safety/crisis-detection.test.js
+node --experimental-vm-modules node_modules/jest/bin/jest.js src/safety/crisis-detection.test.js
 
 # 出力例:
 # PASS src/safety/crisis-detection.test.js
