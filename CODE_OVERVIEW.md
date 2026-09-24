@@ -26,6 +26,8 @@
 | `safety/encryption.js` | AES-256-GCM 暗号プリミティブ・エクスポート/インポート | `encryptData()` `decryptData()` `exportCompanionData()` `importCompanionData()` `collectMigratable()` `applyMigratable()` | なし（Web Crypto） |
 | `safety/secure-storage.js` | 会話データの保存時暗号化（オプトイン） | `secureRead()` `secureWrite()` `setSessionPin()` `migrateToEncrypted()` `ENCRYPTED_KEYS` | `safety/encryption.js` |
 | `utils/logger.js` | PII 不含エラーログ | `recordLog()` `getLogs()` `exportLogs()` `clearLogs()` `classifyApiError()` `ERR` | なし |
+| `integrations/avatar-bridge.js` | デスクトップアバター（AvatarSpeaker）への接続。AI の発言だけを `ws://127.0.0.1:50110` に送る | `createAvatarBridge()` `commandsForNewMessages()` `takeNewMessages()` `avatarEmotionForMode()` `AVATAR_STATUS` | なし（独立） |
+| `integrations/useAvatarBridge.js` | 上記の React フック。設定 `avatarBridge` がオンの間だけ接続し、新しく増えた発言を送る | `useAvatarBridge()` | `integrations/avatar-bridge.js` |
 
 ## 3. 依存関係図
 
@@ -189,6 +191,17 @@ sequenceDiagram
 | `AI_ENGINES` | エンジン定義（Claude/OpenAI/Gemini/Llama）：モデル一覧・鍵プレフィックス・取得リンク |
 | `DEFAULT_SETTINGS` / `DEFAULT_API_MODELS` | 既定設定・エンジン別既定モデル |
 
+### integrations/avatar-bridge.js — デスクトップアバター連携
+
+| 関数 | 概要 |
+|------|------|
+| `createAvatarBridge({url, onStatusChange, ...})` | アバターアプリへ WebSocket 接続。切断時は 1s→2s→5s→10s→30s で再接続。接続試行中に届いた発言だけ接続後に送り、見つからない間の発言は捨てる |
+| `takeNewMessages(seenIds, msgs)` | `msgs` のうち未送信の id だけを返す（有効化時点の履歴は既読扱いにして読み上げない） |
+| `commandsForNewMessages(fresh)` | AI 発言 → `speak`、ユーザー発言 → `stop`（読み上げを止めるだけで**本文は送らない**） |
+| `avatarEmotionForMode(mode)` | CRISIS / WATCHFUL では表情を `neutral` に固定。それ以外は指定しない |
+
+> 送るのは AI の発言・メッセージ id・表情だけ。ユーザー発言・プロフィール・長期記憶は送らず、`recordLog()` にも何も書かない。CSP の `connect-src` には `ws://127.0.0.1:50110` のみを追加している（`index.html`）。
+
 ## 6. サーバーサイド (api/) — Vercel サーバーレス関数
 
 自分の API キーを持たないホスト型利用者向けプロキシ。`HOST_FREE`（無料・Gemini）と `SUPPORTER`（Stripe 決済済み・Claude）の2ティア。
@@ -243,7 +256,7 @@ Stripe 決済フロー: 登録ボタン → `stripe-checkout`（セッション�
 | `aico_msgs` / `aico_history` | `localStorage` | オプトイン（既定は平文JSON） | 会話履歴（逐語） |
 | `aico_longTermMemory` | `localStorage` | オプトイン（既定は平文JSON） | 長期記憶（最大200件）。固有名詞は抽出プロンプトで一般化させる |
 | `aico_companion` / `aico_profile` | `localStorage` | オプトイン（既定は平文JSON） | コンパニオン名・呼び名／興味などのプロフィール |
-| `aico_settings` | `localStorage` | — | アプリ設定（`ENCRYPTED_KEYS` 非対象） |
+| `aico_settings` | `localStorage` | — | アプリ設定（`ENCRYPTED_KEYS` 非対象）。`avatarBridge`（デスクトップアバター連携、既定 false）を含む |
 | `aico_convCount` | `localStorage` | — | 会話数（記憶の減衰計算に使用） |
 | `aico_intervention_v1` | `localStorage` | — | 介入状態（ウェルビーイングは -1/0/1 のスコアのみ） |
 | `aico_phase` / `aico_convMode` / `aico_autoMode` | `localStorage` | — | フェーズ・モード状態 |

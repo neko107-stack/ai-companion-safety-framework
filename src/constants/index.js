@@ -93,6 +93,7 @@ export const AI_ENGINES = [
 export const DEFAULT_SETTINGS = {
   theme: "light", accent: "blue", volume: 80, voice: "zundamon",
   showBlue: true, showYellow: true, showRed: true,
+  avatarBridge: false,
 };
 
 export const DEFAULT_API_MODELS = {
