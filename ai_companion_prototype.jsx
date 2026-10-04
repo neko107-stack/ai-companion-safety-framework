@@ -9,6 +9,7 @@ import { ENCRYPTED_KEYS, setSessionPin, clearSessionPin, isUnlocked, secureRead,
 import { callAI as callAIBase, maskKey } from "./src/ai/engines.js";
 import { detectCrisisFull, isAbusive, isLazy, isDependencyRisk, detectLongitudinalChange, HOTLINE_CONTACTS } from "./src/safety/crisis-detection.js";
 import { CONV_MODES, inferConvMode, buildPrompt as buildPromptBase, parseSettingAction } from "./src/ai/prompt.js";
+import { defaultMetaCheckState, planMetaCognition } from "./src/ai/metacognition.js";
 import { AVATAR_STATUS } from "./src/integrations/avatar-bridge.js";
 import { useAvatarBridge } from "./src/integrations/useAvatarBridge.js";
 
@@ -750,7 +751,7 @@ function defaultInterventionState() {
     lastDependencySession: -99,
     resistanceCount: 0,
     bStage: "precontemplation",
-    cognitiveCheckTurn: 0,          // メタ認知チェックイン最終実施ターン
+    metaCheck: defaultMetaCheckState(), // メタ認知チェックイン/観察の状態（src/ai/metacognition.js）
     cognitiveScaffoldAttempted: false, // 今ターン先行思考促進を試みたか
     cognitiveScaffoldCooldown: 0,   // 脱出口後のクールダウン残ターン数
   };
@@ -759,7 +760,12 @@ function defaultInterventionState() {
 function loadInterventionState() {
   try {
     const raw = localStorage.getItem(INTERVENTION_STATE_KEY);
-    return raw ? { ...defaultInterventionState(), ...JSON.parse(raw) } : defaultInterventionState();
+    if (!raw) return defaultInterventionState();
+    const parsed = JSON.parse(raw);
+    // 旧形式（cognitiveCheckTurn のみ）からの移行
+    const metaCheck = { ...defaultMetaCheckState(), lastTurn: parsed.cognitiveCheckTurn || 0, ...(parsed.metaCheck || {}) };
+    delete parsed.cognitiveCheckTurn;
+    return { ...defaultInterventionState(), ...parsed, metaCheck };
   } catch { return defaultInterventionState(); }
 }
 
@@ -2892,9 +2898,11 @@ export default function AICompanionApp() {
       // 脱出口: 抵抗検知 → クールダウン設定（3ターン間スキャフォールド停止）
       iState = { ...iState, cognitiveScaffoldCooldown: 3 };
       extra += "\n【即時応答指示】ユーザーは今すぐ答えを求めています。前置きや問い返しなく直接応答してください。";
-    } else if (_cognitiveEnabled && (iState.cognitiveScaffoldCooldown || 0) <= 0) {
+    }
+    const _offloadSignal = isCognitiveOffloadRequest(text);
+    const _scaffoldActive = _cognitiveEnabled && !_resistanceNow && (iState.cognitiveScaffoldCooldown || 0) <= 0;
+    if (_scaffoldActive) {
       const _alreadyTried  = isAlreadyTriedRequest(text);
-      const _offloadSignal = isCognitiveOffloadRequest(text);
 
       if (_alreadyTried && _offloadSignal) {
         // すでに試みた上での助けを求め → 努力承認 + スキャフォールド支援
@@ -2905,17 +2913,21 @@ export default function AICompanionApp() {
         extra += "\n【先行思考促進】まず共感・受け止めを示した上で「一緒に考えたい」という姿勢を伝えてから、「どんな感じがしてる？」か「何か引っかかってることある？」のどちらかを1回だけ聞く。答えを急かさない（「なんとなくでもいいよ」等の余白を持たせる）。このターン限りで、次のターンでは改めて問い返さず応答する。";
         iState = { ...iState, cognitiveScaffoldAttempted: true };
       }
-
-      // メタ認知チェックイン: 同テーマで10ターン以上続いた場合に1回だけ
-      // 根拠: Zimmerman (2002) 自己調整学習 / Flavell (1979) メタ認知
-      if (!_offloadSignal && convCount - (iState.cognitiveCheckTurn || 0) >= 10 && convCount >= 10 && nm !== "CRISIS") {
-        extra += "\n【メタ認知促進】会話が長く続いています。「わたしの話って、役に立ってる感じがする？あなた自身はどう考えてきてる？」と一度だけ自然に聞いてください（強制しない・答えにくければスキップでいい）。";
-        iState = { ...iState, cognitiveCheckTurn: convCount };
-      }
     }
 
-    // 重複防止: 同ターンにチェックインが注入済みなら基本人格ヘッジを抑制
-    if (iState.cognitiveScaffoldAttempted || extra.includes("【メタ認知促進】")) {
+    // メタ認知チェックイン / 観察フィードバック（SAFETY_FRAMEWORK.md 5.7.2）
+    // 根拠: Zimmerman (2002) 自己調整学習 / Flavell (1979) メタ認知
+    // 前回の答え（カテゴリのみ）を指示文に埋め込み、話題の区切りでだけ・少なめの頻度で発火する
+    const _meta = planMetaCognition(iState.metaCheck, {
+      text, convCount, sessionCount: iState.sessionCount,
+      enabled: _scaffoldActive, offloadSignal: _offloadSignal,
+      scaffoldAttempted: iState.cognitiveScaffoldAttempted,
+    });
+    iState = { ...iState, metaCheck: _meta.state };
+    if (_meta.directive) extra += _meta.directive;
+
+    // 重複防止: 同ターンにチェックイン・観察が注入済みなら基本人格ヘッジを抑制
+    if (iState.cognitiveScaffoldAttempted || _meta.kind) {
       extra += "\n【重複防止】このターンはすでにユーザーへの問い返しが含まれています。基本人格の確認フレーズ（「どう感じてる？」「わたしの見方が全部正しいとは限らないよ」等）はこのターン省略してください。";
     }
 
@@ -2926,6 +2938,11 @@ export default function AICompanionApp() {
       resistance: _resistanceNow,
       cooldown: iState.cognitiveScaffoldCooldown,
       phase: iState.phase,
+      // 本文は記録しない（PII規約）。種別・カテゴリ・間隔のみ
+      metaKind: _meta.kind,
+      metaSignal: _meta.state.lastSignal,
+      metaInterval: _meta.interval,
+      metaPending: _meta.state.pendingSince != null,
     });
 
     // 機能2: 利用時間摩擦（15往復ごと・時間帯×感情状態・危機時除外）

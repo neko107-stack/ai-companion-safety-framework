@@ -44,6 +44,7 @@ src/
     engines.js               ← callAI() — Claude/OpenAI/Gemini/Llama への統一APIアダプター
     memory.js                ← 長期記憶 CRUD + 時間減衰スコアリング (calcCertainty)
     prompt.js                ← buildPrompt() — システムプロンプト組み立て
+    metacognition.js         ← planMetaCognition() — メタ認知チェックイン/観察フィードバックの判定
   safety/
     crisis-detection.js      ← 危機検知 (Layer 1〜4)
     crisis-detection.test.js ← 危機検知ユニットテスト
@@ -108,7 +109,8 @@ C-SSRS準拠の4層アーキテクチャ。`detectCrisisFull()` が L1+L2+L3 の
 |----------|------|
 | `isCognitiveOffloadRequest()` | 解答要求（「教えて」「どうすれば」等）を検知→先行思考促進 |
 | `isAlreadyTriedRequest()` | 試行済みサイン（「考えたけど」等）を検知→努力承認 |
-| `interventionState.cognitive*` | チェックインターン・試行フラグ・クールダウンを管理 |
+| `planMetaCognition()` (`src/ai/metacognition.js`) | メタ認知チェックイン/観察。区切りでだけ・少なめの頻度で発火し、前回の答え（カテゴリのみ）を指示文に埋め込む |
+| `interventionState.cognitive*` / `.metaCheck` | 試行フラグ・クールダウン・チェックイン状態を管理 |
 
 **安全弁（変更時は維持すること）**: フェーズ1（信頼構築期）・CRISIS・listen モードでは全機能を停止する。「突き放された」感を防ぐため、促しには必ず共感・任意性を伴わせる。詳細は `SAFETY_FRAMEWORK.md` Section 5.7。
 
