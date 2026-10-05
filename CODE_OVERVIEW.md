@@ -22,6 +22,7 @@
 | `ai/claude-response.js` | Claude 応答の読み取り（text ブロックの連結・refusal / max_tokens の文言）と、thinking が既定でオンのモデル（Opus 5 系 / Sonnet 5 / Fable / Mythos）向けの `effort: low`・`max_tokens` 調整。`engines.js` と `api/chat.js` で共用 | `extractClaudeText()` `claudeChatParams()` `thinksByDefault()` `claudeEmptyReason()` | なし（独立） |
 | `ai/memory.js` | 長期記憶 CRUD + 時間減衰 + 復号ミラー | `getLongTermMemory()` `calcCertainty()` `certaintyLabel()` `detectPinRequest` `generateLTMSummary()` `setLtmCache()` `clearLtmCache()` | `ai/engines.js` `safety/secure-storage.js` |
 | `ai/prompt.js` | システムプロンプト生成・会話モード推定 | `CONV_MODES` `inferConvMode()` `buildPrompt()` `parseSettingAction()` | `constants/index.js` `ai/memory.js` |
+| `ai/metacognition.js` | メタ認知チェックイン/観察フィードバックの判定（窓方式・頻度適応・前回カテゴリの埋め込み） | `planMetaCognition()` `classifyMetaCheckAnswer()` `detectNaturalBreak()` `detectSelfReachedInsight()` | なし |
 | `ai/model-discovery.js` | 各社の list models API からモデルを動的検出 | `discoverModels()` `mergeModels()` | `utils/logger.js` |
 | `safety/crisis-detection.js` | C-SSRS 準拠 多層危機検知（L1〜L4）+ 緊急連絡先 | `detectCrisisFull()` `detectCrisis()` … `HOTLINE_CONTACTS` `HOTLINES` | なし（独立） |
 | `safety/encryption.js` | AES-256-GCM 暗号プリミティブ・エクスポート/インポート | `encryptData()` `decryptData()` `exportCompanionData()` `importCompanionData()` `collectMigratable()` `applyMigratable()` | なし（Web Crypto） |
@@ -37,6 +38,7 @@ flowchart TD
     main["main.jsx"] --> proto["ai_companion_prototype.jsx<br/>（UI / sendMessage /<br/>介入状態 / 認知成長）"]
     proto --> prompt["ai/prompt.js"]
     proto --> memory["ai/memory.js"]
+    proto --> metacog["ai/metacognition.js"]
     proto --> engines["ai/engines.js"]
     proto --> crisis["safety/crisis-detection.js"]
     proto --> crypto["safety/encryption.js"]
@@ -98,6 +100,7 @@ sequenceDiagram
 | 危機検知 | `detectCrisisFull()` | `safety/crisis-detection.js` |
 | 会話モード推定 | `inferConvMode()` | `ai/prompt.js` |
 | プロンプト生成 | `buildPrompt()` | `ai/prompt.js` |
+| メタ認知チェックイン/観察 | `planMetaCognition()` | `ai/metacognition.js` |
 | 記憶の確実性計算 | `getLongTermMemory()` / `calcCertainty()` | `ai/memory.js` |
 | AI 呼び出し | `callAI()` | `ai/engines.js` |
 | 記憶更新 | `generateLTMSummary()` | `ai/memory.js` |

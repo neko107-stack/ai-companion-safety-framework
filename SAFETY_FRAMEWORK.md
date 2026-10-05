@@ -459,10 +459,15 @@ AIを「答えの自動販売機」として使った学生は試験成績が低
 |------|---------|------|--------|
 | 先行思考促進 | 解答要求パターン（「教えて」「どうすれば」「やり方」等） | 「一緒に考えたい」と伝え、「どんな感じがしてる？」を1回だけ聞く | 暖かさ先行・任意性付き・1ターン限り |
 | 努力承認 | 試行済みサイン（「考えたけど」「試したけど」「詰まって」） | 先行思考促進をスキップし「考えてくれたんだね」と受け止めてから一緒に解く | 既に努力した人を二度促さない |
-| メタ認知チェックイン | 同一会話が10ターン以上継続 | 「わたしの話、役に立ってる？あなた自身はどう考えてきてる？」を1回だけ | 答えにくければスキップ可と明示 |
+| メタ認知チェックイン | 前回から30往復以上（答えが肯定で安定すると60→120往復、「負担」なら150往復）・同一セッション1回まで。条件を満たすと最大8往復の「窓」を開き、話題の区切り（「なるほど」「ありがとう」等。嬉しい報告の最中は除く）のターンでだけ注入 | 直前の話の振り返りに乗せて「話すと考えがまとまる感じか」を軽く聞く。固定台詞は渡さない。前回の時期と答えの趣旨（カテゴリ）を指示文に埋め込み、同じ聞き方を繰り返さず続きとして確かめる | 窓内に区切りが無ければ見送り（強制しない）。「評価して」型の聞き方禁止。答えにくければスキップ可 |
+| 観察フィードバック | ①チェックインの順番で、前回の答えが肯定（質問と交互）または「負担」だった場合 ②先行思考促進・努力承認から4往復以内に本人が結論にたどり着いたサイン（「〜すればいいんだ」「やってみる」等） | 質問せず、「その考えは本人が組み立てたもの」という事実を一言返す | 評価・採点・褒めすぎをしない。②は10往復に1回まで |
 | 答え抑制ルール | think / coach モード | 最後の一手はユーザーに踏ませる。問い→ヒント→一緒に考える の順 | モード選択時のみ・listenモードは対象外 |
 | 批判的評価の招待 | AIが意見・提案を述べた後 | 「でもあなたはどう感じてる？」を一文添える | CRISISモードでは無効 |
 | 脱出口 | 抵抗パターン（「普通に教えて」「答えてくれないの」等） | 前置きなく直接応答し、3ターンのクールダウンを設定 | MI「抵抗に乗る」原則 |
+
+メタ認知チェックインの答えは `organizing`（話しながら整理できる）/ `self_driven`（自分で考えている）/ `helpful`（助かっている）/ `burden`（評価・試されている感じ、「前も聞いた」）/ `unclear` に分類し、**カテゴリ名だけ**を保存する（本文は保存しない。`interventionState` は平文 localStorage で保存時暗号化の対象外のため）。
+
+> **改訂の経緯（2026-10）**: 旧実装は「10往復ごとに固定台詞をその1ターンで強制注入」だった。直近履歴の窓（約9往復）より間隔が長いため、AIからは前回聞いたことが常に見えず、同じ台詞を同じ形で繰り返していた。また話題の区切りを見ないため、嬉しい報告の直後に唐突に評価を求める形になっていた。実利用での指摘を受け、上記の窓方式・前回要約の埋め込み・頻度の適応・観察への置き換えに改めた。
 
 #### 5.7.3 安全装置（「突き放された」感への配慮）
 
@@ -505,10 +510,14 @@ const isCognitiveOffloadRequest  = t => COGNITIVE_OFFLOAD_PATTERNS.some(p => p.t
 const isAlreadyTriedRequest      = t => ALREADY_TRIED_PATTERNS.some(p => p.test(t));
 
 // interventionState の認知関連フィールド
-// cognitiveCheckTurn          : メタ認知チェックイン最終実施ターン
+// metaCheck                   : メタ認知チェックイン/観察の状態（src/ai/metacognition.js の defaultMetaCheckState()）
+//   lastTurn / lastTs / lastSession / lastKind / count / lastSignal(カテゴリのみ) / stableCount
+//   pendingSince（区切り待ちの窓）/ awaitingAnswer / lastObserveTurn / lastScaffoldTurn
 // cognitiveScaffoldAttempted  : 今ターン先行思考促進を試みたか
 // cognitiveScaffoldCooldown   : 脱出口後のクールダウン残ターン数
 ```
+
+メタ認知チェックインと観察フィードバックの判定は `src/ai/metacognition.js` の `planMetaCognition()`（テスト: `metacognition.test.js`）に実装されている。
 
 think / coach モードの「答え抑制ルール」と、基本人格の「批判的評価の招待」は `src/ai/prompt.js` の `buildPrompt()` および `CONV_MODES` に実装されている。
 
@@ -649,7 +658,8 @@ function shouldShowAds(crisisLevel, mode) {
 
 - **検知**: `isCognitiveOffloadRequest()`（解答要求）+ `isAlreadyTriedRequest()`（試行済みサイン）
 - **ディレクティブ注入**: 先行思考促進・努力承認・メタ認知チェックイン・即時応答（脱出口）を `sendMessage()` の extra に動的付与
-- **状態管理**: `interventionState` に `cognitiveCheckTurn` / `cognitiveScaffoldAttempted` / `cognitiveScaffoldCooldown` を追加
+- **状態管理**: `interventionState` に `metaCheck`（旧 `cognitiveCheckTurn` から移行）/ `cognitiveScaffoldAttempted` / `cognitiveScaffoldCooldown` を追加
+- **メタ認知チェックイン/観察**: `src/ai/metacognition.js` の `planMetaCognition()`（窓方式・前回カテゴリの埋め込み・頻度適応・観察への置き換え）
 - **プロンプト**: think / coach モードへの答え抑制ルール、基本人格への批判的評価の招待を `buildPrompt()` に追加
 - **安全弁**: フェーズ1・CRISIS・listen モードでは完全無効。抵抗検知時は3ターンのクールダウン
 
